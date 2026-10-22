@@ -25,7 +25,7 @@ from . import analysis
 from .clients import FaceitClient, LeetifyClient
 from .config import Settings, get_settings
 from .demo_store import DemoStore
-from .errors import AnalystError
+from .errors import AnalystError, DemoNotFound
 
 INSTRUCTIONS = """\
 Counter-Strike 2 analysis tools over parsed match demos plus FACEIT and Leetify stats.
@@ -102,15 +102,23 @@ def build_server(
         Safe to call twice: an already-parsed demo returns instantly from cache.
         """
         p = Path(path).expanduser()
-        if not p.is_absolute() and settings.demo_dir and not p.exists():
+        relative = not p.is_absolute()
+        if relative and settings.demo_dir and not p.exists():
             p = settings.demo_dir / p
+        if not p.is_file() and relative:
+            # Say exactly where we looked: the usual cause is CS2_DEMO_DIR being unset or wrong.
+            where = (f"in CS2_DEMO_DIR ({settings.demo_dir})" if settings.demo_dir
+                     else f"in the current folder ({Path.cwd()}), because CS2_DEMO_DIR is not set")
+            raise DemoNotFound(f"No file '{path}' {where}. Pass the full path to the .dem file, or set CS2_DEMO_DIR.")
         return store.ingest(p, force=force)
 
     @mcp.tool(annotations=READ_ONLY)
     @guided
     def get_match_overview(demo_id: DemoId) -> dict[str, Any]:
-        """Map, final score per team (with CT/T split) and the full scoreboard: K/D/A, ADR, KAST, HS%,
-        opening kills/deaths, traded deaths, clutches and utility. Start every match analysis here."""
+        """Map, final score per team (with CT/T split) and the full scoreboard: rating (an approximation of
+        HLTV Rating 2.0, 1.00 is average) with each player's rank in their team and in the match, impact,
+        K/D/A, ADR, KAST, HS%, opening kills/deaths, traded deaths, clutches and utility damage.
+        Rank and compare players by rating, not kills. Start every match analysis here."""
         return analysis.match_overview(
             store.meta(demo_id), table(demo_id, "rounds"), table(demo_id, "stats"),
             table(demo_id, "players"), table(demo_id, "round_players"),
@@ -148,7 +156,8 @@ def build_server(
     @guided
     def get_utility_stats(demo_id: DemoId, player: Player) -> dict[str, Any]:
         """A player's utility usage: flashes thrown, enemies blinded and for how long, team-flashes and
-        self-flashes (with the worst ones by round and tick), and grenade damage by type."""
+        self-flashes (with the worst ones by round and tick), and grenade damage by type. Team and self
+        flashes only count blinds of 1.5s or more; shorter ones are reported as minor."""
         sid = steamid(demo_id, player)
         return analysis.utility_summary(table(demo_id, "stats"), table(demo_id, "blinds"), table(demo_id, "damages"), sid)
 

@@ -1,15 +1,35 @@
 # cs2-analyst
 
-An MCP server that turns Counter-Strike 2 match demos into tools an AI agent can use. Point Claude (or your own agent) at a `.dem` file and ask why you lost, who won the opening duels, or which deaths went untraded. Every answer comes back with round and tick references so claims can be checked against the actual match.
+An AI analyst for Counter-Strike 2 match demos. Ask it why you lost, who won the opening duels, or which deaths went untraded. It investigates the demo with a set of analysis tools, then checks every claim it makes against the data before showing you the answer.
 
-This is phase 1 of a larger project: the tool layer. Phase 2 is an agent loop with a claim verifier on top of these tools, and phase 3 is an eval set of human-labelled mistakes to measure it.
+Two parts:
+
+1. **An MCP server** (phase 1) that turns a `.dem` file into 10 tools any MCP client can use, including Claude Desktop.
+2. **A verifying agent** (phase 2) that runs its own loop over those tools, states its answer as structured claims with evidence, and has each claim checked: facts deterministically against the tool results, interpretations by a separate judge model.
+
+```
+$ uv run cs2-agent ask match.dem "How did I do in opening duels?" --player babaya0310
+
+╭─────────────────────────── Answer ───────────────────────────╮
+│ You won 6 of your 7 opening duels, including all 4 on CT.     │
+╰───────────────────────────────────────────────────────────────╯
+  ✓ verified   You won 6 of 7 opening duels       t2:overall.won, t2:overall.taken
+  ✓ verified   All 4 of your CT-side duels were wins   t2:by_side.CT.won
+Did not hold up:
+  ✗ failed     You had 30 kills   (scoreboard[name=babaya0310].kills: expected '30', got 21)
+4 model calls · 2 tool calls · ... · $0.01 · revisions 0
+```
 
 ## Architecture
 
 ```
-Claude Desktop / your agent
-        |  MCP (stdio)
-        v
+cs2-agent (CLI)                      Claude Desktop
+      |                                    |
+  agent/loop.py  model <-> tools           |
+  agent/verifier.py  fact checks           |
+  agent/judge.py  interpretation checks    |
+      |   MCP client (in-process)          |  MCP (stdio)
+      v                                    v
   server.py      protocol layer: thin tool wrappers, error translation
         |
   analysis.py    pure functions: Polars frames in, small JSON-ready dicts out
@@ -18,23 +38,62 @@ Claude Desktop / your agent
   clients/       FACEIT + Leetify HTTP clients (TTL cache, retry with backoff)
 ```
 
-The layers are separate on purpose. `analysis.py` has no I/O and knows nothing about MCP, so the same functions power the server, the tests, and later the agent, evals and ML pipeline.
+The agent reaches the tools through MCP, as a client of its own server, so it uses exactly what Claude Desktop uses: same tools, descriptions and error messages. `analysis.py` has no I/O and knows nothing about MCP, so the same functions power the server, the tests, the agent and later the evals and ML pipeline.
+
+## How the agent works
+
+```
+question ─> model ─tool_use─> run tool via MCP ─[call_id=t3] result─> model ─> ...
+              └─submit_report─> verifier ─all good─> judge ─> report
+                                   └─failures─> actual values sent back, agent resubmits
+```
+
+The agent can't just answer in prose. It calls `submit_report` with a summary plus a list of atomic claims:
+
+- **Facts** carry checks: a tool call id, a path to one value in that result, and the claimed value. Example: `{"call_id": "t2", "path": "duels[round=4].traded", "expected": "true"}`. The verifier resolves the path in the recorded result and compares. No model is involved, so this step can't hallucinate.
+- **Interpretations** ("you lose rounds because you peek without utility") list the facts they rest on. They count as supported only if every cited fact verified and a judge model (Haiku 5.5 by default) agrees the facts actually back the conclusion.
+
+Failed facts go back to the agent with the real values, so it can fix or drop them (one revision by default). Whatever still fails is shown separately as "did not hold up", never mixed into the answer.
 
 ## Design decisions
 
-**Parse once, query many times.** Parsing a demo takes 1 to 10 seconds. `ingest_demo` does it once and writes parquet tables keyed by a content hash of the file. Every other tool reads those small files, so an agent can ask 30 questions about one match cheaply. Re-ingesting the same file is a no-op.
+### Phase 1: tools
 
-**Tool outputs are summaries, not tables.** Tool results go into the model's context window. Returning thousands of raw rows costs tokens and hurts accuracy, so tools return aggregates plus a capped list of the most relevant events, with `limit`, `truncated` and pagination where needed.
+**Parse once, query many times.** Parsing a demo takes 1 to 10 seconds. `ingest_demo` does it once and writes parquet tables keyed by a content hash of the file. Every other tool reads those small files, so an agent can ask 30 questions about one match cheaply.
 
-**Every event carries `round` and `tick`.** That's the hook for phase 2: the agent has to cite evidence, and a verifier re-checks each claim against the data.
+**Tool outputs are summaries, not tables.** Tool results go into the model's context window, so tools return aggregates plus a capped list of the most relevant events, with `limit`, `truncated` and pagination.
 
-**Errors are written for the model.** A wrong player name returns the roster and a "did you mean". An unknown demo id lists the ingested ones. MCP SDK 2.x hides the message of any exception that isn't a `ToolError`, so `server.py` translates domain errors at the boundary. Without that the model only sees "Error executing tool" and gets stuck.
+**Every event carries `round` and `tick`,** so claims can cite evidence and the verifier can find it.
+
+**Errors are written for the model.** A wrong player name returns the roster and a "did you mean". MCP SDK 2.x hides the message of any exception that isn't a `ToolError`, so `server.py` translates domain errors at the boundary. Without that the model only sees "Error executing tool" and gets stuck.
 
 **Tool descriptions are prompts.** The model picks tools from their names and docstrings, so each one says when to use it, not just what it returns.
 
-**Normalise once at ingest.** awpy reports sides as `counter-terrorist`, `terrorist` or team numbers depending on the table. Everything is converted to `CT` / `T` at ingest. Teams are labelled by starting side (or clan tag when the demo has one) because sides swap at halftime, so "CT" is not a team.
+**Normalise once at ingest.** awpy reports sides as `counter-terrorist`, `terrorist` or team numbers depending on the table; everything becomes `CT` / `T`. Teams are labelled by starting side (or clan tag) because sides swap at halftime, so "CT" is not a team.
 
-**Events don't come with round numbers.** awpy's kill and damage tables only have ticks, so `add_round_num` interval-joins them onto round windows. Warmup kills fall outside every window and get dropped; kills after the round was decided are flagged as exit frags and excluded from duel and kill analysis.
+**Events don't come with round numbers.** awpy's kill and damage tables only have ticks, so `add_round_num` interval-joins them onto round windows. Warmup kills fall outside every window and get dropped; kills after the round was decided are flagged as exit frags.
+
+**Rank players by rating, not kills.** The scoreboard includes a rating using the public approximation of HLTV Rating 2.0 (KAST, kills, deaths and assists per round, ADR), the same formula awpy used to ship. HLTV's current Rating 3.0 is built around round swing, how each action changed the team's chance to win the round, and its formula isn't published. Phase 4's win probability model is the route to a swing-based rating. The linear formula goes negative in a stomp, so the displayed rating is floored at 0.00 while ranking uses the raw value.
+
+**Minor blinds aren't team flashes.** Most self-blinds in real demos are under a second (catching the edge of your own flash while turned away). Team and self flashes count only blinds of 1.5s or more; shorter ones are reported separately.
+
+### Phase 2: agent
+
+**Verify facts with code, not with another model.** A judge model can be wrong too. Facts are checked by resolving a path and comparing values, which is deterministic and free. The model is only used where code can't decide: whether evidence supports a conclusion.
+
+**Precision-aware number checks.** A claim is right if the real value, rounded to the decimals the agent wrote, equals the claim: ADR 89.83 matches "90" and "89.8" but not "89". Counts must match exactly. Rounding is half-up (Python's `round()` rounds 2.5 down to 2).
+
+**Paths with filters, not indexes.** `duels[round=4].traded` instead of `duels.3.traded`. Models miscount list positions; selecting by content is robust and reads like evidence.
+
+**No forced tool calls.** Sonnet 5.5 and Opus 5.5 reject `tool_choice: any/tool` with a 400 error, so the loop can't force `submit_report`. It uses `strict: true` schemas (guaranteed-valid report JSON) plus prompting, a nudge if the model answers in plain text, and a final "submit now" turn at the step limit. A plain-text answer is kept but marked unverified.
+
+**The summary can't sneak in specifics.** The judge also reviews the summary and flags any statement (a ranking, a name, a number) that no verified claim backs. This came from a real run where the summary said a player was "second on his team" without any claim behind it.
+
+**Guardrails.** Max model turns (12), a total token budget, one revision pass, and no tool runs after the final-step message.
+
+**Prompt caching on the whole loop.** Every step re-sends the system prompt, tools and history. A top-level `cache_control` marker caches that prefix, so each step pays full price only for what's new.
+
+**Everything is traced.** Each run writes a JSONL file to `traces/`: every model call (tokens, cache hits, latency, cost) and every tool call (args, result, latency, errors). Costs use the published per-model prices in `agent/pricing.py`.
 
 ## Tools
 
@@ -42,10 +101,10 @@ The layers are separate on purpose. `analysis.py` has no I/O and knows nothing a
 | --- | --- |
 | `list_demos` | Which demos are already parsed |
 | `ingest_demo` | Parse a `.dem` file, returns the `demo_id` |
-| `get_match_overview` | Score per team with CT/T split, full scoreboard |
+| `get_match_overview` | Score per team with CT/T split, scoreboard ranked by rating (HLTV 2.0 approximation) |
 | `get_round_summary` | One round: buys, every player's loadout, kill feed with timings, bomb events |
 | `get_opening_duels` | A player's first-kill duels by side, round conversion, trades, positions |
-| `get_utility_stats` | Flashes, enemy vs team vs self blinds, worst team flashes, nade damage |
+| `get_utility_stats` | Flashes, enemy vs team vs self blinds (minor blinds under 1.5s separated), worst team flashes, nade damage |
 | `find_kills` | Filterable, paginated kill feed (e.g. a player's untraded deaths) |
 | `get_faceit_profile` | FACEIT level, ELO, lifetime stats, Steam64 ID |
 | `get_recent_faceit_matches` | Recent FACEIT matches with result, K/D, ADR |
@@ -57,15 +116,17 @@ Requires Python 3.12+ and [uv](https://docs.astral.sh/uv/).
 
 ```bash
 uv sync
-cp .env.example .env   # add your FACEIT key; Leetify works without one
+cp .env.example .env   # add ANTHROPIC_API_KEY for the agent; FACEIT key optional
 uv run pytest
 ```
 
-Try it in the MCP Inspector:
+### Ask the agent
 
 ```bash
-uv run mcp dev src/cs2_analyst/server.py
+uv run cs2-agent ask match.dem "Why did we lose the CT half?" --player YourName
 ```
+
+`match.dem` can be a full path, a file name inside `CS2_DEMO_DIR`, or a cached demo id. Options: `--model` (default `claude-sonnet-5-5`), `--judge-model` (default `claude-haiku-5-5`), `--no-judge`, `--max-steps`, `--max-revisions`, `--json`.
 
 ### Claude Desktop
 
@@ -83,13 +144,18 @@ Add this to `claude_desktop_config.json` (Settings > Developer > Edit Config), w
 }
 ```
 
-Then ask: *"Ingest match.dem and tell me why we lost the CT half."*
+Try the server on its own in the MCP Inspector with `uv run mcp dev src/cs2_analyst/server.py`.
 
 Your own matchmaking demos are under `.../Counter-Strike Global Offensive/game/csgo/replays/`. FACEIT demos can be downloaded from the match room.
 
 ## Tests
 
-`uv run pytest` runs 40 tests against a hand-scripted 2v2 match that goes through the real ingest pipeline, plus mocked HTTP for the API clients and an in-memory MCP session for the server.
+`uv run pytest` runs 94 tests with no network or API key:
+
+- a hand-scripted 2v2 match that goes through the real ingest pipeline
+- mocked HTTP for the FACEIT and Leetify clients
+- an in-memory MCP session for the server
+- the agent loop driven by a scripted fake model: revisions, the plain-text nudge, the step limit, refused tool calls after the final step, cost accounting and trace files
 
 For a check against a real match with a known result:
 
@@ -97,13 +163,14 @@ For a check against a real match with a known result:
 CS2_TEST_DEMO=/path/to/faceit-de_mirage-6de46e85.dem uv run pytest -m demo
 ```
 
-That demo is public in [awpy-fixtures](https://github.com/pnxenopoulos/awpy-fixtures). The test checks the 16-14 score, FACEIT's published kills and deaths, and that this project's opening-duel logic agrees with awpy's independent scoreboard for all 10 players.
+That demo is public in [awpy-fixtures](https://github.com/pnxenopoulos/awpy-fixtures). The tests check the 16-14 score, FACEIT's published kills and deaths, that the opening-duel logic agrees with awpy's independent scoreboard for all 10 players, and that agent evidence paths resolve against real tool output.
 
 ## Roadmap
 
-- [x] Phase 1: tool layer (this repo)
-- [ ] Phase 2: agent loop with findings schema and claim verifier
+- [x] Phase 1: tool layer
+- [x] Phase 2: agent loop with findings schema, deterministic verifier, judge and tracing
 - [ ] Phase 3: eval set of labelled mistakes, recall and precision vs a no-verifier baseline
 - [ ] Phase 4: explainable round win probability model (XGBoost + SHAP)
+- [ ] Phase 5: web app
 
-Built on [awpy](https://github.com/pnxenopoulos/awpy) and the [MCP Python SDK](https://github.com/modelcontextprotocol/python-sdk).
+Built on [awpy](https://github.com/pnxenopoulos/awpy), the [MCP Python SDK](https://github.com/modelcontextprotocol/python-sdk) and the [Anthropic API](https://platform.claude.com/docs).

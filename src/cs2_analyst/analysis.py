@@ -21,6 +21,9 @@ from .errors import PlayerNotFound, RoundNotFound
 
 GRENADE_WEAPONS = {"hegrenade", "inferno", "molotov", "incgrenade", "flashbang", "smokegrenade", "decoy"}
 
+# Team/self blinds shorter than this are "minor": usually the edge of a flash while turned away.
+MINOR_BLIND_S = 1.5
+
 
 # ---------------------------------------------------------------- helpers
 
@@ -140,15 +143,20 @@ def match_overview(
         t[f"{r['winner_side'].lower()}_rounds_won"] += 1
 
     board = (
-        stats.with_columns(
+        with_rating(stats)
+        .with_columns(
             pl.col("steamid").replace_strict(labels, default="unknown", return_dtype=pl.Utf8).alias("team")
         )
-        .sort(["team", "kills"], descending=[False, True])
+        .with_columns(
+            pl.col("rating_raw").rank("ordinal", descending=True).cast(pl.Int32).alias("match_rank"),
+            pl.col("rating_raw").rank("ordinal", descending=True).over("team").cast(pl.Int32).alias("team_rank"),
+        )
+        .sort(["team", "rating_raw"], descending=[False, True])
         .select(
-            "name", "team", "kills", "deaths", "assists",
+            "name", "team", "rating", "team_rank", "match_rank", "impact", "kills", "deaths", "assists",
             pl.col("adr").round(1), pl.col("kast").round(1), pl.col("headshot_pct").round(1).alias("hs_pct"),
             "opening_kills", "opening_deaths", "traded_deaths",
-            "clutches_won", "clutches_played", "utility_damage", "enemies_flashed",
+            "clutches_won", "clutches_played", "utility_damage",
         )
     )
     return {
@@ -157,8 +165,33 @@ def match_overview(
         "rounds_played": live.height,
         "score": dict(sorted(teams.items(), key=lambda kv: -kv[1]["rounds_won"])),
         "scoreboard": _rows(board),
-        "note": "Knife rounds excluded. Teams are labelled by starting side because sides swap at halftime.",
+        "note": (
+            "Knife rounds excluded. Teams are labelled by starting side because sides swap at halftime. "
+            "Players are ranked by `rating`, an approximation of HLTV Rating 2.0 (1.00 is average); "
+            "rank players by rating, not by kills."
+        ),
     }
+
+
+def with_rating(stats: pl.DataFrame) -> pl.DataFrame:
+    """Add `impact` and `rating`: the public approximation of HLTV Rating 2.0.
+
+    Same formula awpy shipped in its stats module: per-round kills (KPR), deaths (DPR),
+    assists (APR), plus KAST % and ADR. 1.00 is roughly average. HLTV's current Rating 3.0
+    is built around "round swing" (how each action moved the team's chance to win the
+    round) and its exact formula isn't published, so this is the closest open stand-in.
+    """
+    rounds = pl.col("rounds_played").cast(pl.Float64)
+    kpr, dpr, apr = pl.col("kills") / rounds, pl.col("deaths") / rounds, pl.col("assists") / rounds
+    impact = 2.13 * kpr + 0.42 * apr - 0.41
+    rating = 0.0073 * pl.col("kast") + 0.3591 * kpr - 0.5329 * dpr + 0.2372 * impact + 0.0032 * pl.col("adr") + 0.1587
+    # The formula is linear, so a 0-13 game with no damage goes below zero, which real ratings
+    # never do. Display is floored at 0.00; `rating_raw` keeps the order for ranking.
+    return stats.with_columns(
+        impact.round(2).alias("impact"),
+        rating.clip(lower_bound=0).round(2).alias("rating"),
+        rating.alias("rating_raw"),
+    )
 
 
 def round_summary(
@@ -288,8 +321,12 @@ def utility_summary(
 
     thrown = blinds.filter(pl.col("attacker_steamid") == steamid)
     enemy = thrown.filter(pl.col("attacker_side") != pl.col("victim_side"))
-    team = thrown.filter((pl.col("attacker_side") == pl.col("victim_side")) & (pl.col("victim_steamid") != steamid))
-    selff = thrown.filter(pl.col("victim_steamid") == steamid)
+    team_all = thrown.filter((pl.col("attacker_side") == pl.col("victim_side")) & (pl.col("victim_steamid") != steamid))
+    self_all = thrown.filter(pl.col("victim_steamid") == steamid)
+    # Short blinds (catching the edge of a flash while turned away) aren't real team or self
+    # flashes. Most self-blinds in real demos are under a second, so they're counted apart.
+    significant = pl.col("duration") >= MINOR_BLIND_S
+    team, selff = team_all.filter(significant), self_all.filter(significant)
 
     nade_dmg = (
         damages.filter((pl.col("attacker_steamid") == steamid) & pl.col("weapon").is_in(list(GRENADE_WEAPONS)))
@@ -309,6 +346,10 @@ def utility_summary(
         "avg_enemy_blind_s": round(float(enemy["duration"].mean()), 2) if enemy.height else 0.0,
         "teammates_flashed": team.height,
         "self_flashes": selff.height,
+        "minor_team_blinds": team_all.height - team.height,
+        "minor_self_blinds": self_all.height - selff.height,
+        "team_self_flash_rule": f"teammates_flashed and self_flashes count blinds of {MINOR_BLIND_S}s or longer; "
+                                "shorter ones are listed as minor and are not mistakes worth calling out.",
         "utility_damage_per_round": round(base.get("utility_damage", 0) / rounds_played, 1) if rounds_played else None,
         "grenade_damage_by_type": _rows(nade_dmg),
         "worst_team_flashes": _rows(worst_team_flashes),

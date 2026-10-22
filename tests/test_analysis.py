@@ -1,3 +1,4 @@
+import polars as pl
 import pytest
 
 from cs2_analyst import analysis as A
@@ -38,6 +39,31 @@ def test_match_overview_score_attributes_rounds_to_teams_not_sides(tables, store
     assert ov["score"]["Team A (started CT)"] == {"rounds_won": 1, "ct_rounds_won": 1, "t_rounds_won": 0}
     assert list(ov["score"])[0] == "Team B (started T)", "winner listed first"
     assert len(ov["scoreboard"]) == 4
+
+
+def test_rating_matches_hltv_2_approximation(tables):
+    # alpha: 2 kills, 3 deaths, 0 assists in 4 rounds, KAST 75, ADR 60
+    alpha = A.with_rating(tables("stats")).filter(pl.col("name") == "alpha").row(0, named=True)
+    kpr, dpr = 2 / 4, 3 / 4
+    impact = 2.13 * kpr - 0.41
+    expected = 0.0073 * 75 + 0.3591 * kpr - 0.5329 * dpr + 0.2372 * impact + 0.0032 * 60 + 0.1587
+    assert alpha["rating"] == pytest.approx(expected, abs=0.006)
+    assert alpha["impact"] == pytest.approx(impact, abs=0.006)
+
+
+def test_scoreboard_ranks_by_rating_not_kills(tables, store):
+    ov = A.match_overview(store.meta("fakedemo0001"), tables("rounds"), tables("stats"),
+                          tables("players"), tables("round_players"))
+    board = ov["scoreboard"]
+    assert sorted(r["match_rank"] for r in board) == [1, 2, 3, 4]
+    for team in {r["team"] for r in board}:
+        rows = [r for r in board if r["team"] == team]
+        assert [r["team_rank"] for r in rows] == [1, 2], "listed best-rated first within each team"
+        assert rows[0]["rating"] >= rows[1]["rating"]
+    # bravo and delta both have 3 kills; bravo died once, delta twice, so bravo must rate higher
+    by_name = {r["name"]: r for r in board}
+    assert by_name["bravo"]["match_rank"] < by_name["delta"]["match_rank"]
+    assert "rating" in ov["note"]
 
 
 # ---------------------------------------------------------------- round summary
@@ -86,7 +112,9 @@ def test_opening_duels_limit_truncates(tables):
 
 def test_utility_splits_enemy_team_and_self_flashes(tables):
     u = A.utility_summary(tables("stats"), tables("blinds"), tables("damages"), 1)
-    assert (u["enemy_blinds"], u["teammates_flashed"], u["self_flashes"]) == (1, 1, 1)
+    # team blind on bravo is 1.5s (counts); self blind is 1.0s (minor, not a self-flash)
+    assert (u["enemy_blinds"], u["teammates_flashed"], u["self_flashes"]) == (1, 1, 0)
+    assert (u["minor_team_blinds"], u["minor_self_blinds"]) == (0, 1)
     assert u["worst_team_flashes"][0]["teammate"] == "bravo"
     # team damage from the HE on bravo is excluded; only 40 on charlie counts
     assert u["grenade_damage_by_type"] == [{"weapon": "hegrenade", "damage": 40, "hits": 1}]
@@ -112,3 +140,13 @@ def test_find_kills_paginates(tables):
     p2 = A.find_kills(tables("kills"), limit=3, offset=p1["next_offset"])
     assert p1["total"] == 8 and p1["next_offset"] == 3
     assert {k["tick"] for k in p1["kills"]}.isdisjoint({k["tick"] for k in p2["kills"]})
+
+
+def test_rating_is_floored_at_zero_but_ranking_keeps_order():
+    stats = pl.DataFrame({
+        "name": ["a", "b"], "rounds_played": [13, 13], "kills": [1, 0], "deaths": [13, 13],
+        "assists": [0, 0], "kast": [7.7, 0.0], "adr": [14.2, 0.0],
+    })
+    rated = A.with_rating(stats)
+    assert rated["rating"].to_list() == [0.0, 0.0], "a stomp can't produce a negative rating"
+    assert rated["rating_raw"][0] > rated["rating_raw"][1], "1-13 still ranks above 0-13"

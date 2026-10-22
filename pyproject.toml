@@ -8,6 +8,7 @@ authors = [
 ]
 requires-python = ">=3.12"
 dependencies = [
+    "anthropic>=2.1.0",
     "awpy>=3.1.1",
     "httpx>=0.28.1",
     "mcp[cli]>=2.3.0",
@@ -17,6 +18,7 @@ dependencies = [
 
 [project.scripts]
 cs2-analyst = "cs2_analyst.server:main"
+cs2-agent = "cs2_analyst.agent.cli:main"
 
 [build-system]
 requires = ["uv_build>=0.11.32,<0.12.0"]

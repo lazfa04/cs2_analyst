@@ -13,3 +13,4 @@ wheels/
 .env
 *.dem
 .cs2-analyst/
+traces/

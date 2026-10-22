@@ -52,3 +52,37 @@ def test_opening_duels_agree_with_awpy_scoreboard(real):
     for row in t("stats").iter_rows(named=True):
         od = A.opening_duels(t("kills"), t("rounds"), row["steamid"], store.meta(did)["tick_rate"])
         assert (od["overall"]["won"], od["overall"]["lost"]) == (row["opening_kills"], row["opening_deaths"]), row["name"]
+
+
+def test_agent_checks_resolve_against_real_tool_output(real):
+    """A scripted agent run on the real demo: paths and values match real result shapes."""
+    import anyio
+
+    from cs2_analyst.agent import AgentConfig, run_agent
+    from cs2_analyst.agent.toolbox import Toolbox
+    from cs2_analyst.config import Settings
+    from cs2_analyst.server import build_server
+
+    from .test_agent import FakeLLM, fact, report, tool
+
+    store, did = real
+    llm = FakeLLM(
+        [tool("get_match_overview", demo_id=did)],
+        [tool("get_opening_duels", demo_id=did, player="babaya0310")],
+        [report(
+            fact("c1", "laiq's team won 16 rounds", ("t1", "score.team_laiq__.rounds_won", "16")),
+            fact("c2", "babaya0310 got 21 kills", ("t1", "scoreboard[name=babaya0310].kills", "21")),
+            fact("c3", "he won 6 opening duels", ("t2", "overall.won", "6")),
+            fact("c4", "his round 5 duel was against kzri", ("t2", "duels[round=5].opponent", "kzri")),
+        )],
+    )
+    settings = Settings(cache_dir=store.cache_dir, demo_dir=None, faceit_api_key=None,
+                        leetify_api_key=None, http_cache_ttl_s=0)
+
+    async def go():
+        async with Toolbox.connect(build_server(settings=settings, store=store)) as tb:
+            demo = {"demo_id": did, "map": "de_mirage", "rounds_played": 30}
+            return await run_agent("How did babaya do?", demo, llm, tb, AgentConfig(judge_model=None))
+
+    res = anyio.run(go)
+    assert [r.status for r in res.verification.results] == ["verified"] * 4
