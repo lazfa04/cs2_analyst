@@ -1,0 +1,54 @@
+"""Optional check against a real demo with a known result.
+
+Skipped unless CS2_TEST_DEMO points at a .dem file. Defaults below are for the
+public awpy fixture `faceit-de_mirage-6de46e85.dem` (FACEIT, Mirage, 16-14):
+https://github.com/pnxenopoulos/awpy-fixtures
+"""
+
+import os
+from pathlib import Path
+
+import pytest
+
+from cs2_analyst import analysis as A
+from cs2_analyst.demo_store import DemoStore
+
+DEMO = os.getenv("CS2_TEST_DEMO")
+pytestmark = [pytest.mark.demo, pytest.mark.skipif(not DEMO, reason="set CS2_TEST_DEMO to a .dem path")]
+
+
+@pytest.fixture(scope="module")
+def real(tmp_path_factory):
+    store = DemoStore(tmp_path_factory.mktemp("cache"))
+    meta = store.ingest(Path(DEMO))
+    return store, meta["demo_id"]
+
+
+def test_final_score_matches_published_result(real):
+    store, did = real
+    t = lambda n: store.table(did, n)
+    ov = A.match_overview(store.meta(did), t("rounds"), t("stats"), t("players"), t("round_players"))
+    assert sorted(s["rounds_won"] for s in ov["score"].values()) == [14, 16]
+    assert ov["rounds_played"] == 30
+
+
+def test_scoreboard_matches_faceit_ground_truth(real):
+    store, did = real
+    stats = {r["name"]: r for r in store.table(did, "stats").iter_rows(named=True)}
+    assert (stats["babaya0310"]["kills"], stats["babaya0310"]["deaths"]) == (21, 25)
+    assert (stats["cntoz"]["kills"], stats["cntoz"]["deaths"]) == (19, 19)
+
+
+def test_every_round_has_ten_players_at_freeze_end(real):
+    store, did = real
+    counts = store.table(did, "round_players").group_by("round_num").len()["len"]
+    assert counts.min() == 10
+
+
+def test_opening_duels_agree_with_awpy_scoreboard(real):
+    """Our first-kill logic must agree with awpy's independent opening_kills/deaths."""
+    store, did = real
+    t = lambda n: store.table(did, n)
+    for row in t("stats").iter_rows(named=True):
+        od = A.opening_duels(t("kills"), t("rounds"), row["steamid"], store.meta(did)["tick_rate"])
+        assert (od["overall"]["won"], od["overall"]["lost"]) == (row["opening_kills"], row["opening_deaths"]), row["name"]

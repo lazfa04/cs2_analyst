@@ -1,0 +1,32 @@
+[project]
+name = "cs2-analyst"
+version = "0.1.0"
+description = "MCP server exposing CS2 demo analysis, FACEIT and Leetify stats as agent tools"
+readme = "README.md"
+authors = [
+    { name = "Afzal Junaid" }
+]
+requires-python = ">=3.12"
+dependencies = [
+    "awpy>=3.1.1",
+    "httpx>=0.28.1",
+    "mcp[cli]>=2.3.0",
+    "polars>=2.0.0",
+    "python-dotenv>=1.2.4",
+]
+
+[project.scripts]
+cs2-analyst = "cs2_analyst.server:main"
+
+[build-system]
+requires = ["uv_build>=0.11.32,<0.12.0"]
+build-backend = "uv_build"
+
+[dependency-groups]
+dev = [
+    "pytest>=9.1.1",
+]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+markers = ["demo: needs a real .dem file (set CS2_TEST_DEMO)"]
