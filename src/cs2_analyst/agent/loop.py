@@ -24,7 +24,7 @@ from pydantic import ValidationError
 from .findings import SUBMIT_REPORT, SUBMIT_REPORT_TOOL, Report
 from .judge import judge
 from .llm import LLM
-from .prompts import FINAL_STEP, NO_REPORT, SYSTEM, first_message
+from .prompts import AGENT_PROMPT_VERSION, DEFAULT_JUDGE_PROMPT, FINAL_STEP, NO_REPORT, SYSTEM, first_message
 from .toolbox import Toolbox
 from .trace import Trace
 from .verifier import Verification, feedback, verify
@@ -39,6 +39,7 @@ class AgentConfig:
     token_budget: int = 400_000
     max_tokens_per_turn: int = 16_000
     player: str | None = None
+    judge_prompt: str = DEFAULT_JUDGE_PROMPT
 
 
 @dataclass
@@ -51,6 +52,9 @@ class AgentResult:
     revisions: int
     trace: Trace
     ledger: dict[str, Any] = field(default_factory=dict)
+    # Claim statuses of the FIRST report, before any revision. It's the no-verifier baseline:
+    # what the user would have seen if nothing checked the agent's work.
+    first_draft: dict[str, int] | None = None
 
 
 def _tool_result(tool_use_id: str, content: str, is_error: bool = False) -> dict[str, Any]:
@@ -66,7 +70,8 @@ async def run_agent(question: str, demo: dict[str, Any], llm: LLM, toolbox: Tool
     cfg = config or AgentConfig()
     trace = trace or Trace()
     trace.log("run_start", question=question, demo_id=demo["demo_id"], model=cfg.model,
-              judge_model=cfg.judge_model, max_steps=cfg.max_steps)
+              judge_model=cfg.judge_model, judge_prompt=cfg.judge_prompt, agent_prompt=AGENT_PROMPT_VERSION,
+              max_steps=cfg.max_steps)
 
     tools = [*await toolbox.schemas(), SUBMIT_REPORT_TOOL]
     messages: list[dict[str, Any]] = [{"role": "user", "content": first_message(question, demo, cfg.player)}]
@@ -74,6 +79,7 @@ async def run_agent(question: str, demo: dict[str, Any], llm: LLM, toolbox: Tool
     report: Report | None = None
     verification = Verification([])
     revisions, stop_reason, final_turn_sent, nudged = 0, "step_limit", False, False
+    first_draft: dict[str, int] | None = None
 
     step = 0
     while step < cfg.max_steps + 1:  # +1: one grace turn after the "submit now" message
@@ -126,6 +132,8 @@ async def run_agent(question: str, demo: dict[str, Any], llm: LLM, toolbox: Tool
                 continue
             verification = verify(candidate, ledger)
             report = candidate
+            if first_draft is None:
+                first_draft = verification.counts()
             trace.log("report_submitted", step=step, revision=revisions, counts=verification.counts())
             if verification.failed and revisions < cfg.max_revisions and not final_turn_sent:
                 revisions += 1
@@ -149,8 +157,8 @@ async def run_agent(question: str, demo: dict[str, Any], llm: LLM, toolbox: Tool
         messages.append({"role": "user", "content": content})
 
     if report is not None and cfg.judge_model and stop_reason == "submitted":
-        await judge(llm, cfg.judge_model, report, verification, trace)
+        await judge(llm, cfg.judge_model, report, verification, trace, cfg.judge_prompt)
 
     trace.log("run_end", stop_reason=stop_reason, revisions=revisions,
               counts=verification.counts(), **trace.summary())
-    return AgentResult(question, demo, report, verification, stop_reason, revisions, trace, ledger)
+    return AgentResult(question, demo, report, verification, stop_reason, revisions, trace, ledger, first_draft)

@@ -150,3 +150,21 @@ def test_rating_is_floored_at_zero_but_ranking_keeps_order():
     rated = A.with_rating(stats)
     assert rated["rating"].to_list() == [0.0, 0.0], "a stomp can't produce a negative rating"
     assert rated["rating_raw"][0] > rated["rating_raw"][1], "1-13 still ranks above 0-13"
+
+
+def test_fire_is_labelled_molotov_incendiary_not_inferno(tables):
+    """'inferno' is the engine's name for burning fire; to a player it reads like the map."""
+    damages = pl.DataFrame({
+        "tick": [320, 330, 340, 350],
+        "attacker_steamid": [1, 1, 1, 1], "attacker_side": ["CT"] * 4,
+        "victim_steamid": [3, 3, 4, 4], "victim_side": ["T"] * 4,
+        "weapon": ["inferno", "molotov", "incgrenade", "hegrenade"], "dmg_health": [30, 5, 20, 40],
+    }, schema_overrides={"attacker_steamid": pl.UInt64, "victim_steamid": pl.UInt64})
+    u = A.utility_summary(tables("stats"), tables("blinds"), damages, 1)
+    by_type = {g["weapon"]: g["damage"] for g in u["grenade_damage_by_type"]}
+    assert by_type == {"molotov/incendiary": 55, "hegrenade": 40}, "fire variants merged under one label"
+
+    kills = tables("kills").with_columns(pl.lit("inferno").alias("weapon"))
+    res = A.find_kills(kills, weapon="molotov", limit=1)
+    assert res["total"] == 8 and res["kills"][0]["weapon"] == "molotov/incendiary"
+    assert A.find_kills(kills, weapon="inferno")["total"] == 8, "the engine name still works as a filter"

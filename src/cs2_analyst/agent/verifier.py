@@ -152,6 +152,7 @@ class ClaimResult:
     status: Status
     checks: list[CheckResult] = field(default_factory=list)
     note: str | None = None
+    judged: bool = False  # True when the judge model ruled on it (vs the verifier rejecting it)
 
 
 @dataclass

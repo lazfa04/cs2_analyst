@@ -24,6 +24,14 @@ GRENADE_WEAPONS = {"hegrenade", "inferno", "molotov", "incgrenade", "flashbang",
 # Team/self blinds shorter than this are "minor": usually the edge of a flash while turned away.
 MINOR_BLIND_S = 1.5
 
+# The engine calls burning fire "inferno", which reads like the map. All fire variants get one
+# player-facing name, so fire damage isn't split three ways either.
+WEAPON_LABELS = {"inferno": "molotov/incendiary", "molotov": "molotov/incendiary", "incgrenade": "molotov/incendiary"}
+
+
+def weapon_label(col: str = "weapon") -> pl.Expr:
+    return pl.col(col).replace(WEAPON_LABELS)
+
 
 # ---------------------------------------------------------------- helpers
 
@@ -219,7 +227,7 @@ def round_summary(
         pl.col("attacker_name").alias("attacker"),
         pl.col("attacker_side").alias("attacker_side"),
         pl.col("victim_name").alias("victim"),
-        "weapon", "headshot", "is_trade", "victim_traded", "after_round_end",
+        weapon_label(), "headshot", "is_trade", "victim_traded", "after_round_end",
     )
 
     econ = {
@@ -289,7 +297,7 @@ def opening_duels(
         return {"taken": df.height, "won": won, "lost": df.height - won}
 
     detail = duels.select(
-        pl.col("round_num").alias("round"), "tick", "side", "won", "opponent", "weapon",
+        pl.col("round_num").alias("round"), "tick", "side", "won", "opponent", weapon_label(),
         "headshot", "time_s", "x", "y", "round_won",
         # if the player died first, did a teammate trade them?
         pl.when(~pl.col("won")).then(pl.col("victim_traded")).otherwise(None).alias("traded"),
@@ -331,6 +339,7 @@ def utility_summary(
     nade_dmg = (
         damages.filter((pl.col("attacker_steamid") == steamid) & pl.col("weapon").is_in(list(GRENADE_WEAPONS)))
         .filter(pl.col("attacker_side") != pl.col("victim_side"))
+        .with_columns(weapon_label())
         .group_by("weapon")
         .agg(pl.col("dmg_health").sum().alias("damage"), pl.len().alias("hits"))
         .sort("damage", descending=True)
@@ -382,7 +391,8 @@ def find_kills(
     if side:
         df = df.filter(pl.col("attacker_side") == side.upper())
     if weapon:
-        df = df.filter(pl.col("weapon").str.contains(weapon.lower(), literal=True))
+        w = weapon.lower()
+        df = df.filter(pl.col("weapon").str.contains(w, literal=True) | weapon_label().str.contains(w, literal=True))
     if headshot is not None:
         df = df.filter(pl.col("headshot") == headshot)
     if traded is not None:
@@ -392,7 +402,7 @@ def find_kills(
     page = df.slice(offset, limit).select(
         pl.col("round_num").alias("round"), "tick",
         pl.col("attacker_name").alias("attacker"), "attacker_side",
-        pl.col("victim_name").alias("victim"), "weapon", "headshot", "thrusmoke",
+        pl.col("victim_name").alias("victim"), weapon_label(), "headshot", "thrusmoke",
         "is_trade", "victim_traded",
     )
     return {

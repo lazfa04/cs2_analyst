@@ -15,7 +15,7 @@ import time
 
 from .findings import Report
 from .llm import LLM
-from .prompts import JUDGE_SYSTEM
+from .prompts import DEFAULT_JUDGE_PROMPT, JUDGE_PROMPTS
 from .trace import Trace
 from .verifier import Verification
 
@@ -52,7 +52,8 @@ VERDICT_TOOL = {
 }
 
 
-async def judge(llm: LLM, model: str, report: Report, verification: Verification, trace: Trace) -> None:
+async def judge(llm: LLM, model: str, report: Report, verification: Verification, trace: Trace,
+                prompt: str = DEFAULT_JUDGE_PROMPT) -> None:
     """Upgrade `not_judged` interpretations to supported/unsupported and fill summary_issues, in place."""
     if not report.summary.strip():
         return
@@ -76,10 +77,10 @@ async def judge(llm: LLM, model: str, report: Report, verification: Verification
     }
     t0 = time.perf_counter()
     resp = await llm.create(
-        model=model, system=JUDGE_SYSTEM, tools=[VERDICT_TOOL], max_tokens=4000,
+        model=model, system=JUDGE_PROMPTS[prompt], tools=[VERDICT_TOOL], max_tokens=4000,
         messages=[{"role": "user", "content": json.dumps(payload, default=str, indent=1)}],
     )
-    trace.llm_call(step=-1, model=model, purpose="judge", usage=resp.usage,
+    trace.llm_call(step=-1, model=model, purpose=f"judge-{prompt}", usage=resp.usage,
                    latency_ms=round((time.perf_counter() - t0) * 1000), stop_reason=resp.stop_reason)
 
     call = next((b for b in resp.tool_uses if b.name == SUBMIT_VERDICTS), None)
@@ -93,5 +94,6 @@ async def judge(llm: LLM, model: str, report: Report, verification: Verification
         if v is not None:
             r.status = "supported" if v["supported"] else "unsupported"
             r.note = v.get("reason")
+            r.judged = True
     verification.summary_issues = [s for s in data.get("unbacked_summary_statements", []) if s.strip()]
     trace.log("judge", verdicts=list(verdicts.values()), summary_issues=verification.summary_issues)

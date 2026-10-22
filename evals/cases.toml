@@ -1,0 +1,56 @@
+# The eval set: every question runs against every demo, so 4 demos x 6 questions = 24 cases.
+# Keep this file stable between runs; results are only comparable on the same set.
+#
+# `file` is a full path or a name inside CS2_DEMO_DIR. `player` fills {player} in the questions.
+
+# ---------------------------------------------------------------- demos
+
+[[demo]]
+name = "d2"
+file = "d2.dem"
+player = "v1zal"
+
+[[demo]]
+name = "anubis"
+file = "anubis.dem"
+player = "v1zal"
+
+# Public pro demo (B8 vs Vitality, Mirage), so anyone can reproduce the numbers:
+# https://github.com/pnxenopoulos/awpy-fixtures/releases/download/hltv-de_mirage-2394170/hltv-de_mirage-2394170.dem
+[[demo]]
+name = "vitality-b8-mirage"
+file = "hltv-de_mirage-2394170.dem"
+player = "ZywOo"
+
+# Falcons: download a recent match from HLTV (GOTV demo), extract the .rar with 7-Zip,
+# then fill in the map's file name and a Falcons player's in-game name and uncomment.
+# [[demo]]
+# name = "falcons-map1"
+# file = "falcons-vs-xxx-m1-mirage.dem"
+# player = "m0NESY"
+
+# ---------------------------------------------------------------- questions
+
+[[question]]
+id = "overview"
+text = "How did {player} play this match?"
+
+[[question]]
+id = "result"
+text = "Why did {player}'s team win or lose this match?"
+
+[[question]]
+id = "trades"
+text = "Which of {player}'s deaths weren't traded by a teammate?"
+
+[[question]]
+id = "utility"
+text = "How was {player}'s utility usage?"
+
+[[question]]
+id = "openings"
+text = "How did {player} do in opening duels, and did the team convert them into round wins?"
+
+[[question]]
+id = "best"
+text = "Who was the best player on each team, and why?"

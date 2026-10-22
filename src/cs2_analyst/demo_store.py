@@ -204,11 +204,17 @@ class DemoStore:
 
         from awpy import Demo, InvalidDemoError  # imported lazily: heavy native module
 
+        # awpy only checks the header when opening; a truncated file (an interrupted download)
+        # passes that and fails later, while the tables are decoded. Catch both stages.
         try:
             demo = Demo(p)
+            meta = ingest_demo_object(demo, demo_id, out, source=str(p))
         except InvalidDemoError as e:
-            raise AnalystError(f"'{p.name}' is not a valid CS2 demo ({e}). CS:GO demos are not supported.") from e
-        meta = ingest_demo_object(demo, demo_id, out, source=str(p))
+            size_mb = p.stat().st_size / 1e6
+            raise AnalystError(
+                f"'{p.name}' ({size_mb:.1f} MB) couldn't be parsed: {e}. If it was just downloaded, the download "
+                "is probably incomplete or corrupted: delete it and download it again. CS:GO demos are not supported."
+            ) from e
         self._load.cache_clear()
         return {**meta, "cached": False}
 

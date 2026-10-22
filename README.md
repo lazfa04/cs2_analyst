@@ -95,6 +95,39 @@ Failed facts go back to the agent with the real values, so it can fix or drop th
 
 **Everything is traced.** Each run writes a JSONL file to `traces/`: every model call (tokens, cache hits, latency, cost) and every tool call (args, result, latency, errors). Costs use the published per-model prices in `agent/pricing.py`.
 
+## Evals
+
+"It looks right" isn't evidence, so the agent is measured on a fixed eval set: every question in `evals/cases.toml` runs against every demo (your own matches plus a public pro demo, so the numbers are reproducible).
+
+```bash
+uv run cs2-agent eval run --tag baseline        # runs every case, asks before spending
+uv run cs2-agent eval report                    # metrics of the latest run
+uv run cs2-agent eval label                     # label the judge's verdicts (blind)
+uv run cs2-agent eval compare baseline latest   # what changed between two runs
+uv run cs2-agent eval rejudge baseline          # same answers, re-judged by the current judge
+```
+
+What gets measured, and the question each metric answers:
+
+| Metric | Question it answers |
+| --- | --- |
+| Facts verified / failed / unchecked | Of the facts shown to the user, how many are provably right? |
+| First drafts with a wrong fact | How often the agent's first answer had a wrong fact, i.e. what you'd see with **no verifier**. The gap to "final answers with a wrong fact" is what verification buys. |
+| Interpretations supported / rejected | How many conclusions survive the judge, and whether they fail on evidence (verifier) or on reasoning (judge) |
+| Unbacked summary text | How often the answer slips in specifics that no claim backs |
+| Judge agrees with expert | How often the judge's verdict matches a human player's, and whether it errs lenient or strict |
+| Cost, latency, tool calls, cache hits | What a question costs to answer |
+
+**Labelling.** `eval label` shows each interpretation with the verified facts behind it and asks whether the facts support it. The judge's own verdict stays hidden so it can't anchor you. Labels go to `evals/labels.jsonl` (committed, it's the human-labelled dataset) and are reused by later runs, so judge agreement is scored automatically from then on.
+
+**Judge agreement needs a baseline.** Labels are lopsided (in the first set, 13 of 16 conclusions were fair), so a judge that rubber-stamps everything would score 81%. The report shows that trivial score next to the real one; a judge has to beat it.
+
+**Comparing judges fairly.** `eval rejudge <run>` keeps a run's answers, resets only the judge's verdicts and asks the judge again, so two judge prompts rule on exactly the same labelled items. Judge prompts are versioned (`--judge-prompt v1|v2`); v2 was written after the first labels showed v1 rejecting fair reads 7 times out of 8 disagreements. Because v2 was shaped by those labels, its score on them is optimistic; new labels from new demos are the real test.
+
+**Runs** are written to `evals/runs/<run>/`: `results.jsonl` (one line per case, appended as each finishes), a trace per case, and `report.md`. A run that's interrupted or hits API errors can be finished with `--resume <run>`, which only runs the missing cases. One failing case never stops the run.
+
+**Changing something?** Run `eval run --tag <change>` and `eval compare` against the baseline. Prompt tweaks, models (`--model claude-haiku-5-5`), step limits and the judge (`--no-judge`) are all flags.
+
 ## Tools
 
 | Tool | What it answers |
@@ -150,12 +183,13 @@ Your own matchmaking demos are under `.../Counter-Strike Global Offensive/game/c
 
 ## Tests
 
-`uv run pytest` runs 94 tests with no network or API key:
+`uv run pytest` runs 104 tests with no network or API key:
 
 - a hand-scripted 2v2 match that goes through the real ingest pipeline
 - mocked HTTP for the FACEIT and Leetify clients
 - an in-memory MCP session for the server
 - the agent loop driven by a scripted fake model: revisions, the plain-text nudge, the step limit, refused tool calls after the final step, cost accounting and trace files
+- the eval runner, metrics, resume, labelling and reports, with a scripted model that gets a fact wrong and fixes it after feedback
 
 For a check against a real match with a known result:
 
@@ -169,7 +203,8 @@ That demo is public in [awpy-fixtures](https://github.com/pnxenopoulos/awpy-fixt
 
 - [x] Phase 1: tool layer
 - [x] Phase 2: agent loop with findings schema, deterministic verifier, judge and tracing
-- [ ] Phase 3: eval set of labelled mistakes, recall and precision vs a no-verifier baseline
+- [x] Phase 3: eval runner, metrics with a no-verifier baseline, blind labelling and judge agreement
+- [ ] Phase 3b: labelled "key mistakes" per match, to measure whether the agent finds what matters
 - [ ] Phase 4: explainable round win probability model (XGBoost + SHAP)
 - [ ] Phase 5: web app
 

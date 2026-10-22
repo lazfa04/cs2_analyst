@@ -24,6 +24,7 @@ from rich.table import Table
 from ..config import get_settings
 from ..server import build_server
 from .llm import AnthropicLLM
+from .prompts import DEFAULT_JUDGE_PROMPT, JUDGE_PROMPTS
 from .loop import AgentConfig, AgentResult, run_agent
 from .toolbox import Toolbox
 
@@ -60,7 +61,7 @@ async def ask(args: argparse.Namespace) -> AgentResult:
 
     settings = get_settings()
     error = None
-    async with Toolbox.connect(build_server(settings)) as toolbox:
+    async with Toolbox.connect(build_server(settings, log_level="WARNING")) as toolbox:
         demo = await _resolve_demo(toolbox, args.demo)
         if isinstance(demo, str):
             error = f"Could not load demo: {demo}"
@@ -68,6 +69,7 @@ async def ask(args: argparse.Namespace) -> AgentResult:
             cfg = AgentConfig(
                 model=args.model, judge_model=None if args.no_judge else args.judge_model,
                 max_steps=args.max_steps, max_revisions=args.max_revisions, player=args.player,
+                judge_prompt=args.judge_prompt,
             )
             try:
                 return await run_agent(args.question, demo, AnthropicLLM(), toolbox, cfg)
@@ -124,7 +126,7 @@ def to_json(result: AgentResult) -> dict:
         "summary": result.report.summary if result.report else None,
         "claims": [
             {"id": r.claim.id, "kind": r.claim.kind, "text": r.claim.text, "status": r.status, "note": r.note,
-             "checks": [vars(c) for c in r.checks], "supports": r.claim.supports}
+             "judged": r.judged, "checks": [vars(c) for c in r.checks], "supports": r.claim.supports}
             for r in result.verification.results
         ],
         "summary_issues": result.verification.summary_issues,
@@ -133,7 +135,7 @@ def to_json(result: AgentResult) -> dict:
 
 
 def main(argv: list[str] | None = None) -> None:
-    p = argparse.ArgumentParser(prog="cs2-agent", description="Ask questions about a CS2 demo.")
+    p = argparse.ArgumentParser(prog="cs2-agent", description="Ask questions about a CS2 demo, or run the evals.")
     sub = p.add_subparsers(dest="command", required=True)
     a = sub.add_parser("ask", help="Ask one question about one demo.")
     a.add_argument("demo", help="Path to a .dem, a file name in CS2_DEMO_DIR, or a cached demo_id.")
@@ -142,11 +144,18 @@ def main(argv: list[str] | None = None) -> None:
     a.add_argument("--model", default="claude-sonnet-5-5")
     a.add_argument("--judge-model", default="claude-haiku-5-5")
     a.add_argument("--no-judge", action="store_true", help="Skip the interpretation judge.")
+    a.add_argument("--judge-prompt", choices=sorted(JUDGE_PROMPTS), default=DEFAULT_JUDGE_PROMPT)
     a.add_argument("--max-steps", type=int, default=12)
     a.add_argument("--max-revisions", type=int, default=1)
     a.add_argument("--json", action="store_true", help="Print the result as JSON.")
     a.add_argument("--trace-dir", default=os.getenv("CS2_TRACE_DIR", "traces"))
+    from ..evals import cli as eval_cli
+
+    eval_cli.add_parser(sub)
     args = p.parse_args(argv)
+    if args.command == "eval":
+        eval_cli.run(args)
+        return
 
     if not os.getenv("ANTHROPIC_API_KEY"):
         sys.exit("ANTHROPIC_API_KEY is not set. Add it to your .env file (see .env.example).")

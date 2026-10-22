@@ -64,6 +64,7 @@ def build_server(
     store: DemoStore | None = None,
     faceit: Callable[[], FaceitClient] | None = None,
     leetify: Callable[[], LeetifyClient] | None = None,
+    log_level: str = "INFO",
 ) -> MCPServer:
     settings = settings or get_settings()
     store = store or DemoStore(settings.cache_dir)
@@ -71,7 +72,7 @@ def build_server(
     faceit = faceit or functools.cache(lambda: FaceitClient(settings.faceit_api_key, settings.http_cache_ttl_s))
     leetify = leetify or functools.cache(lambda: LeetifyClient(settings.leetify_api_key, settings.http_cache_ttl_s))
 
-    mcp = MCPServer("cs2-analyst", instructions=INSTRUCTIONS, version="0.1.0")
+    mcp = MCPServer("cs2-analyst", instructions=INSTRUCTIONS, version="0.1.0", log_level=log_level)
 
     def table(demo_id: str, name: str):
         return store.table(demo_id, name)

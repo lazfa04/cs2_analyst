@@ -53,3 +53,59 @@ def test_unknown_demo_id_lists_known_ids(store):
 def test_ingest_missing_file_gives_a_hint(tmp_path: Path):
     with pytest.raises(DemoNotFound, match="replays"):
         DemoStore(tmp_path).ingest(tmp_path / "missing.dem")
+
+
+def test_truncated_demo_gives_a_redownload_hint(tmp_path: Path):
+    """An interrupted download passes awpy's header check and fails later, while decoding."""
+    import os
+
+    import pytest
+
+    from cs2_analyst.errors import AnalystError
+
+    src = os.getenv("CS2_TEST_DEMO")
+    if not src:
+        pytest.skip("set CS2_TEST_DEMO to a .dem path")
+    truncated = tmp_path / "truncated.dem"
+    with open(src, "rb") as f:
+        truncated.write_bytes(f.read(2_600_000))
+    with pytest.raises(AnalystError, match="download is probably incomplete"):
+        DemoStore(tmp_path / "cache").ingest(truncated)
+
+
+def test_failed_parse_releases_the_demo_file(tmp_path: Path):
+    """On Windows a still-mapped demo can't be deleted; a failed ingest must not keep it open."""
+    import gc
+    import os
+    import weakref
+
+    import pytest
+
+    import awpy
+
+    from cs2_analyst.errors import AnalystError
+
+    src = os.getenv("CS2_TEST_DEMO")
+    if not src:
+        pytest.skip("set CS2_TEST_DEMO to a .dem path")
+    truncated = tmp_path / "truncated.dem"
+    with open(src, "rb") as f:
+        truncated.write_bytes(f.read(2_600_000))
+
+    opened = []
+    real_demo = awpy.Demo
+
+    def tracking_demo(path):
+        d = real_demo(path)
+        opened.append(weakref.ref(d))
+        return d
+
+    awpy.Demo = tracking_demo
+    try:
+        with pytest.raises(AnalystError) as err:
+            DemoStore(tmp_path / "cache").ingest(truncated)
+    finally:
+        awpy.Demo = real_demo
+    assert err.value.__cause__ is None and err.value.__context__ is None, "no chained traceback keeping frames alive"
+    gc.collect()
+    assert opened and opened[0]() is None, "the Demo (and its memory map) must be released"
