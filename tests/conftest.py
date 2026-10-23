@@ -12,6 +12,8 @@ Match script (tick rate 64, 4 rounds, halftime after round 2):
   r3 CT win  (B)   sides swapped; alpha (now T) opens vs charlie (win)
   r4 CT win  (B)   delta opens vs alpha (alpha dies, bravo trades him)
   Final: Team B 3 - 1 Team A.  Plus one warmup kill at tick 50 that must be dropped.
+  Grenades: alpha smoke+flash r1 (CT), charlie smoke before / molotov after the r2 plant (T),
+  alpha smoke after the r2 plant (CT retake), alpha HE r3 (T).
 """
 
 from __future__ import annotations
@@ -104,6 +106,16 @@ class FakeDemo:
         "equipment_value": [4000, 3000, 9000, 20000], "buy_type": ["pistol", "pistol", "eco", "full"],
         "n_players": [2, 2, 2, 2],
     })
+
+    # weapon_fire events: grenade throws (plus one rifle shot and one warmup throw that must be ignored)
+    shots = pl.DataFrame({
+        "tick": [60, 280, 290, 295, 1650, 1750, 1800, 2350],
+        "steamid": [1, 1, 1, 1, 3, 3, 1, 1],
+        "name": ["alpha", "alpha", "alpha", "alpha", "charlie", "charlie", "alpha", "alpha"],
+        "side": [CT, CT, CT, CT, T, T, CT, T],
+        "weapon": ["weapon_smokegrenade", "weapon_smokegrenade", "weapon_flashbang", "weapon_ak47",
+                   "weapon_smokegrenade", "weapon_molotov", "weapon_smokegrenade", "weapon_hegrenade"],
+    }, schema_overrides={"steamid": pl.UInt64})
 
     def load(self, *datasets: str) -> None:
         pass

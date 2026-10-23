@@ -136,6 +136,9 @@ def match_overview(
     stats: pl.DataFrame,
     players: pl.DataFrame,
     round_players: pl.DataFrame,
+    kills: pl.DataFrame | None = None,
+    damages: pl.DataFrame | None = None,
+    bomb: pl.DataFrame | None = None,
 ) -> dict[str, Any]:
     labels = team_labels(round_players, players)
     winners = _round_winner_teams(rounds, round_players, labels)
@@ -150,6 +153,14 @@ def match_overview(
         t["rounds_won"] += 1
         t[f"{r['winner_side'].lower()}_rounds_won"] += 1
 
+    if kills is not None:
+        # awpy's clutch columns count every last-alive situation (even 1v5s on an eco and post-round
+        # deaths). Replace them with the clutch rules get_clutches uses, so the two never disagree.
+        counts = clutch_counts(last_alive_situations(kills, rounds, round_players, damages, bomb))
+        stats = stats.with_columns(
+            pl.col("steamid").map_elements(lambda s_: counts.get(s_, (0, 0))[0], return_dtype=pl.Int64).alias("clutches_won"),
+            pl.col("steamid").map_elements(lambda s_: counts.get(s_, (0, 0))[1], return_dtype=pl.Int64).alias("clutches_played"),
+        )
     board = (
         with_rating(stats)
         .with_columns(
@@ -320,6 +331,8 @@ def utility_summary(
     blinds: pl.DataFrame,
     damages: pl.DataFrame,
     steamid: int,
+    kills: pl.DataFrame | None = None,
+    tick_rate: float = 64.0,
 ) -> dict[str, Any]:
     s = stats.filter(pl.col("steamid") == steamid)
     base = s.select(
@@ -344,9 +357,11 @@ def utility_summary(
         .agg(pl.col("dmg_health").sum().alias("damage"), pl.len().alias("hits"))
         .sort("damage", descending=True)
     )
+    team = _with_death_while_blind(team, kills, tick_rate)
+    costly = team.filter(pl.col("teammate_died_while_blind"))
     worst_team_flashes = team.sort("duration", descending=True).head(5).select(
         pl.col("round_num").alias("round"), "tick", pl.col("victim_name").alias("teammate"),
-        pl.col("duration").round(2).alias("blind_s"),
+        pl.col("duration").round(2).alias("blind_s"), "teammate_died_while_blind",
     )
     rounds_played = base.get("rounds_played") or 0
     return {
@@ -362,12 +377,76 @@ def utility_summary(
         "utility_damage_per_round": round(base.get("utility_damage", 0) / rounds_played, 1) if rounds_played else None,
         "grenade_damage_by_type": _rows(nade_dmg),
         "worst_team_flashes": _rows(worst_team_flashes),
+        "costly_team_flashes": costly.height,
+        "costly_team_flash_list": _rows(costly.sort("tick").select(
+            pl.col("round_num").alias("round"), "tick", pl.col("victim_name").alias("teammate"),
+            pl.col("duration").round(2).alias("blind_s"), pl.col("_killer").alias("killed_by"),
+            pl.col("_death_tick").alias("death_tick"),
+        )),
+        "costly_rule": f"A team flash is costly when the blinded teammate died before the blind wore off "
+                       f"(+{COSTLY_GRACE_S}s). That's the only kind worth calling a mistake; most team flashes cost nothing.",
     }
+
+
+COSTLY_GRACE_S = 0.5
+
+
+def _with_death_while_blind(team_blinds: pl.DataFrame, kills: pl.DataFrame | None, tick_rate: float) -> pl.DataFrame:
+    """Flag team blinds where the blinded teammate died before the blind (plus a short grace) wore off."""
+    if kills is None or team_blinds.is_empty():
+        return team_blinds.with_columns(
+            pl.lit(False).alias("teammate_died_while_blind"),
+            pl.lit(None, dtype=pl.Utf8).alias("_killer"),
+            pl.lit(None, dtype=pl.Int64).alias("_death_tick"),
+        )
+    deaths = kills.select(
+        pl.col("victim_steamid"), pl.col("tick").cast(pl.Int64).alias("_death_tick"),
+        pl.col("attacker_name").alias("_killer"),
+    )
+    b = team_blinds.with_row_index("_i").with_columns(
+        (pl.col("tick").cast(pl.Int64) + ((pl.col("duration") + COSTLY_GRACE_S) * tick_rate).cast(pl.Int64)).alias("_until")
+    )
+    hits = (
+        b.select("_i", "victim_steamid", "tick", "_until")
+        .join(deaths, on="victim_steamid", how="inner")
+        .filter((pl.col("_death_tick") >= pl.col("tick").cast(pl.Int64)) & (pl.col("_death_tick") <= pl.col("_until")))
+        .group_by("_i").agg(pl.col("_death_tick").min(), pl.col("_killer").first())
+    )
+    return (
+        b.join(hits, on="_i", how="left")
+        .with_columns(pl.col("_death_tick").is_not_null().alias("teammate_died_while_blind"))
+        .drop("_i", "_until")
+    )
+
+
+def _kill_tags(kills: pl.DataFrame, rounds: pl.DataFrame | None) -> pl.DataFrame:
+    """Add `opening` (first kill of the round) and `attacker_won_round` to every live kill."""
+    df = kills.filter(~pl.col("after_round_end")).sort("tick")
+    df = df.with_columns((pl.col("tick") == pl.col("tick").min().over("round_num")).alias("opening"))
+    if rounds is not None:
+        df = df.join(live_rounds(rounds).select("round_num", "winner_side"), on="round_num", how="left").with_columns(
+            (pl.col("attacker_side") == pl.col("winner_side")).alias("attacker_won_round")
+        ).drop("winner_side")
+    else:
+        df = df.with_columns(pl.lit(None, dtype=pl.Boolean).alias("attacker_won_round"))
+    return df
+
+
+def _group_counts(df: pl.DataFrame, name_col: str, key: str) -> list[dict[str, Any]]:
+    out = (
+        df.drop_nulls(name_col)
+        .group_by(name_col)
+        .agg(pl.len().alias("count"), pl.col("round_num").unique().sort().alias("rounds"))
+        .sort(["count", name_col], descending=[True, False])
+        .rename({name_col: key})
+    )
+    return _rows(out)
 
 
 def find_kills(
     kills: pl.DataFrame,
     *,
+    rounds: pl.DataFrame | None = None,
     steamid: int | None = None,
     role: str = "any",
     round_num: int | None = None,
@@ -378,14 +457,20 @@ def find_kills(
     limit: int = 20,
     offset: int = 0,
 ) -> dict[str, Any]:
-    """Filterable kill feed with pagination. `role` is attacker / victim / any."""
-    df = kills.filter(~pl.col("after_round_end"))
+    """Filterable kill feed with pagination, plus counts over ALL matching kills (not just the page).
+
+    The counts exist so nobody has to tally rows by hand: "who killed me most", "how many on T side"
+    and "which rounds" are read straight from `by_attacker`, `by_side` and `rounds`.
+    """
+    exit_frags = kills.filter(pl.col("after_round_end"))
+    df = _kill_tags(kills, rounds)
     if steamid is not None:
         cond = {
             "attacker": pl.col("attacker_steamid") == steamid,
             "victim": pl.col("victim_steamid") == steamid,
         }.get(role, (pl.col("attacker_steamid") == steamid) | (pl.col("victim_steamid") == steamid))
         df = df.filter(cond)
+        exit_frags = exit_frags.filter(cond)
     if round_num is not None:
         df = df.filter(pl.col("round_num") == round_num)
     if side:
@@ -399,16 +484,398 @@ def find_kills(
         df = df.filter(pl.col("victim_traded") == traded)
 
     df = df.sort("tick")
+    # Side split: with a player and a role, it's the side THAT PLAYER was on; otherwise the killer's side.
+    if steamid is not None and role == "victim":
+        side_col, side_of = pl.col("victim_side"), "the player (the victim)"
+    elif steamid is not None and role == "attacker":
+        side_col, side_of = pl.col("attacker_side"), "the player (the killer)"
+    elif steamid is not None:
+        side_col = pl.when(pl.col("attacker_steamid") == steamid).then(pl.col("attacker_side")).otherwise(pl.col("victim_side"))
+        side_of = "the player"
+    else:
+        side_col, side_of = pl.col("attacker_side"), "the killer"
+    by_side = {s_: 0 for s_ in ("CT", "T")}
+    for row in df.group_by(side_col.alias("_s")).len().iter_rows(named=True):
+        if row["_s"] in by_side:
+            by_side[row["_s"]] = row["len"]
+
     page = df.slice(offset, limit).select(
         pl.col("round_num").alias("round"), "tick",
         pl.col("attacker_name").alias("attacker"), "attacker_side",
         pl.col("victim_name").alias("victim"), weapon_label(), "headshot", "thrusmoke",
-        "is_trade", "victim_traded",
+        "opening", "is_trade", "victim_traded", "attacker_won_round",
     )
     return {
         "total": df.height,
+        "rounds": sorted(set(df["round_num"].to_list())),
+        "by_side": by_side,
+        "by_side_is_side_of": side_of,
+        "by_attacker": _group_counts(df, "attacker_name", "attacker"),
+        "by_victim": _group_counts(df, "victim_name", "victim"),
+        "tags": {
+            "openings": int(df["opening"].sum()),
+            "trades": int(df["is_trade"].sum()),
+            "in_rounds_the_killer_won": int(df["attacker_won_round"].sum()) if rounds is not None else None,
+        },
+        "exit_frags_excluded": exit_frags.height,
         "offset": offset,
         "returned": page.height,
         "next_offset": offset + limit if offset + limit < df.height else None,
         "kills": _rows(page),
+        "note": "total, rounds, by_side, by_attacker, by_victim and tags count ALL matching kills, not just this page. "
+                "Cite them for counts instead of counting rows.",
+    }
+
+
+# ---------------------------------------------------------------- clutches
+
+# How a CS player counts clutches (Afzal's rules, from labelling the Falcons eval):
+#   * any last-alive situation the player's side WINS is a clutch won, even a 1v5. If he died and the
+#     bomb won it, it still counts, flagged won_after_death ("last to die, then the bomb went off")
+#   * a lost 1v4 or 1v5 is just "last alive", unless he clearly went for it: got a kill or planted the
+#     bomb (m0NESY's 1v4 on Anubis r18: 2 kills and a plant). Damage alone isn't enough at those odds
+#   * surviving a lost round (saving the gun) isn't a lost clutch at all
+#   * a lost 1v1 is always a lost clutch (unless saved)
+#   * a lost 1v2/1v3 is a lost clutch only if he attempted it: got a kill, did damage, planted the bomb
+#     (T), or died near the planted bomb going for the defuse (CT). Otherwise it's "last alive".
+BIG_DISADVANTAGE = 4  # 1v4 and 1v5
+# A CT who dies within this distance of the planted bomb was going for the defuse (CS units; a bombsite
+# is roughly 1000-1500 units across). A heuristic: there's no start-defuse event in the demo.
+DEFUSE_ATTEMPT_RADIUS = 800.0
+
+
+def last_alive_situations(
+    kills: pl.DataFrame,
+    rounds: pl.DataFrame,
+    round_players: pl.DataFrame,
+    damages: pl.DataFrame | None = None,
+    bomb: pl.DataFrame | None = None,
+) -> list[dict[str, Any]]:
+    """Every moment a player became the last one alive on their side with enemies still up.
+
+    Replays each round's kill feed against the roster at freeze end. Both sides can end up in one
+    in the same round (a 1v3 that turns into a 1v1). Raw situations, before deciding which count as
+    clutches; awpy's scoreboard counts all of these.
+    """
+    live = live_rounds(rounds).select("round_num", "winner_side")
+    winners = dict(live.iter_rows())
+    roster: dict[int, dict[str, set[int]]] = {}
+    names: dict[int, str] = {}
+    for r in round_players.iter_rows(named=True):
+        if r["round_num"] in winners and r["side"] in ("CT", "T"):
+            roster.setdefault(r["round_num"], {"CT": set(), "T": set()})[r["side"]].add(r["steamid"])
+            names[r["steamid"]] = r["name"]
+
+    feed = kills.filter(~pl.col("after_round_end")).sort("tick")
+    by_round: dict[int, list[dict[str, Any]]] = {}
+    for k in feed.iter_rows(named=True):
+        by_round.setdefault(k["round_num"], []).append(k)
+
+    found: list[dict[str, Any]] = []
+    for rnd, sides in sorted(roster.items()):
+        alive = {s_: set(v) for s_, v in sides.items()}
+        side_of = {sid: s_ for s_, ids in sides.items() for sid in ids}
+        started: dict[str, dict[str, Any]] = {}
+        for k in by_round.get(rnd, []):
+            victim = k["victim_steamid"]
+            vside = side_of.get(victim)
+            if vside is None:
+                continue
+            for c in started.values():
+                if k["attacker_steamid"] == c["_sid"] and vside != c["side"]:
+                    c["kills"] += 1
+                if victim == c["_sid"]:
+                    c["_death"] = (k["tick"], k.get("victim_x"), k.get("victim_y"))
+            alive[vside].discard(victim)
+            enemy = "T" if vside == "CT" else "CT"
+            if vside not in started and len(alive[vside]) == 1 and alive[enemy]:
+                sid = next(iter(alive[vside]))
+                started[vside] = {"round": rnd, "tick": k["tick"], "player": names[sid], "side": vside,
+                                  "vs": len(alive[enemy]), "kills": 0, "_sid": sid}
+        for c in sorted(started.values(), key=lambda c: c["tick"]):
+            c["won"] = winners[rnd] == c["side"]
+            c["survived"] = c["_sid"] in alive[c["side"]]
+            c["situation"] = f"1v{c['vs']}"
+            c["attempt"] = _attempt_signals(c, damages, bomb)
+            found.append(c)
+    return found
+
+
+def _attempt_signals(c: dict[str, Any], damages: pl.DataFrame | None, bomb: pl.DataFrame | None) -> list[str]:
+    """What shows the player actually went for it after becoming last alive."""
+    signals = ["kill"] if c["kills"] else []
+    rnd, sid, start = c["round"], c["_sid"], c["tick"]
+    if damages is not None and damages.height:
+        hit = damages.filter(
+            (pl.col("round_num") == rnd) & (pl.col("attacker_steamid") == sid) & (pl.col("tick") >= start)
+            & (pl.col("victim_side") != c["side"]) & (pl.col("dmg_health") > 0) & ~pl.col("after_round_end")
+        )
+        if hit.height:
+            signals.append("damage")
+    if bomb is not None and bomb.height:
+        in_round = bomb.filter(pl.col("round_num") == rnd)
+        if c["side"] == "T" and in_round.filter(
+            pl.col("event").is_in(["start_plant", "finish_plant"]) & (pl.col("steamid") == sid) & (pl.col("tick") >= start)
+        ).height:
+            signals.append("planted")
+        death = c.get("_death")
+        plant = in_round.filter(pl.col("event") == "finish_plant").sort("tick")
+        if c["side"] == "CT" and death and plant.height and {"x", "y"} <= set(plant.columns) and death[1] is not None:
+            p = plant.row(0, named=True)
+            if p["tick"] <= death[0] and p["x"] is not None:
+                dist = ((p["x"] - death[1]) ** 2 + (p["y"] - death[2]) ** 2) ** 0.5
+                if dist <= DEFUSE_ATTEMPT_RADIUS:
+                    signals.append("went_for_defuse")
+    return signals
+
+
+def clutch_outcome(c: dict[str, Any]) -> str:
+    if c["won"]:
+        return "won"
+    if c["survived"]:
+        return "saved"
+    attempt = set(c.get("attempt") or [])
+    if c["vs"] >= BIG_DISADVANTAGE:
+        return "lost" if c["kills"] >= 1 or "planted" in attempt else "last_alive"
+    attempted = bool(attempt) or c["kills"] >= 1
+    if attempted or c["vs"] == 1:
+        return "lost"
+    return "last_alive"
+
+
+def clutch_counts(found: list[dict[str, Any]]) -> dict[int, tuple[int, int]]:
+    """steamid -> (clutches won, clutches played) under the rules above."""
+    out: dict[int, list[int]] = {}
+    for c in found:
+        o = clutch_outcome(c)
+        if o in ("won", "lost"):
+            w, p = out.setdefault(c["_sid"], [0, 0])
+            out[c["_sid"]] = [w + (o == "won"), p + 1]
+    return {k: (v[0], v[1]) for k, v in out.items()}
+
+
+def clutches(
+    kills: pl.DataFrame,
+    rounds: pl.DataFrame,
+    round_players: pl.DataFrame,
+    steamid: int | None = None,
+    limit: int = 30,
+    damages: pl.DataFrame | None = None,
+    bomb: pl.DataFrame | None = None,
+) -> dict[str, Any]:
+    """Clutches the way players count them, plus the last-alive situations that don't count.
+
+    Starts from every last-alive situation, then: won = clutch won (any odds); lost = an attempt
+    (died after a kill, or any 1v1 died); saved = survived a lost round; last_alive = a lost 1v4/1v5
+    or dying in a 1v2/1v3 without a kill.
+    """
+    found = last_alive_situations(kills, rounds, round_players, damages, bomb)
+    if steamid is not None:
+        found = [c for c in found if c["_sid"] == steamid]
+    for c in found:
+        c["outcome"] = clutch_outcome(c)
+        c["won_after_death"] = c["won"] and not c["survived"]
+    real = [c for c in found if c["outcome"] in ("won", "lost")]
+    other = [c for c in found if c["outcome"] not in ("won", "lost")]
+
+    def _summary(all_: list[dict[str, Any]]) -> dict[str, Any]:
+        cs = [c for c in all_ if c["outcome"] in ("won", "lost")]
+        situations: dict[str, dict[str, int]] = {}
+        for c in cs:
+            s_ = situations.setdefault(c["situation"], {"played": 0, "won": 0})
+            s_["played"] += 1
+            s_["won"] += int(c["won"])
+        return {"played": len(cs), "won": sum(c["won"] for c in cs), "lost": sum(not c["won"] for c in cs),
+                "by_situation": dict(sorted(situations.items())),
+                "won_after_death": sum(c["outcome"] == "won" and not c["survived"] for c in all_),
+                "saved": sum(c["outcome"] == "saved" for c in all_),
+                "last_alive_not_clutch": sum(c["outcome"] == "last_alive" for c in all_)}
+
+    by_player: dict[str, list[dict[str, Any]]] = {}
+    for c in found:
+        by_player.setdefault(c["player"], []).append(c)
+    strip = lambda cs: [{k: v for k, v in c.items() if not k.startswith("_")} for c in cs]  # noqa: E731
+    return {
+        "summary": _summary(found),
+        "by_player": sorted(
+            ({"name": n, **_summary(cs)} for n, cs in by_player.items()),
+            key=lambda x: (-x["played"], -x["won"], x["name"]),
+        ) if steamid is None else None,
+        "clutches": strip(real)[:limit],
+        "not_clutches": strip(other)[:limit],
+        "truncated": len(real) > limit or len(other) > limit,
+        "rule": "A last-alive situation starts when a player is the last one alive on their side with enemies up. "
+                "outcome: won = side won the round (any odds, also by bomb or time) and counts as a clutch won; "
+                "won_after_death means he died and the bomb or time won it (he was last to die, describe it that "
+                "way); lost = a failed attempt and counts as a clutch lost: any lost 1v1, or a 1v2/1v3 where `attempt` "
+                "shows he went for it (kill, damage, planted, went_for_defuse), or a 1v4/1v5 where he got a kill or "
+                "planted; saved = survived a lost round (not a clutch); last_alive = any other lost 1v4/1v5, or a "
+                "1v2/1v3 he didn't attempt (not a clutch). The "
+                "scoreboard's clutch columns use these same rules.",
+    }
+
+
+# ---------------------------------------------------------------- round by round
+
+def round_list(
+    rounds: pl.DataFrame,
+    kills: pl.DataFrame,
+    round_players: pl.DataFrame,
+    players: pl.DataFrame,
+    round_economy: pl.DataFrame,
+    bomb: pl.DataFrame,
+    max_rounds: int | None = None,
+    overtime_rounds: int = 6,
+) -> dict[str, Any]:
+    """Every round in one compact table, plus halves and how each team did per buy type.
+
+    Answers "how did the match flow" and "did economy decide it" in one call instead of
+    pulling every round summary.
+    """
+    labels = team_labels(round_players, players)
+    live = live_rounds(rounds).sort("round_num")
+    # side -> team for each round, from the freeze-end roster
+    side_team: dict[tuple[int, str], str] = {}
+    rp = round_players.with_columns(
+        pl.col("steamid").replace_strict(labels, default=None, return_dtype=pl.Utf8).alias("team")
+    ).drop_nulls("team")
+    for row in rp.group_by(["round_num", "side"]).agg(pl.col("team").mode().first()).iter_rows(named=True):
+        side_team[(row["round_num"], row["side"])] = row["team"]
+
+    econ = {(e["round_num"], e["side"]): e for e in round_economy.iter_rows(named=True)}
+    firsts = {
+        r["round_num"]: r for r in
+        kills.filter(~pl.col("after_round_end")).sort("tick").group_by("round_num", maintain_order=True)
+        .first().iter_rows(named=True)
+    }
+    plants = {
+        r["round_num"]: r["bombsite"] for r in
+        bomb.filter(pl.col("event") == "finish_plant").group_by("round_num").first().iter_rows(named=True)
+    }
+    team_names = sorted(set(labels.values()))
+    score = {t: 0 for t in team_names}
+    rows: list[dict[str, Any]] = []
+    for r in live.iter_rows(named=True):
+        n = r["round_num"]
+        winner = side_team.get((n, r["winner_side"]))
+        if winner in score:
+            score[winner] += 1
+        fk = firsts.get(n)
+        teams = []
+        for side in ("CT", "T"):
+            e = econ.get((n, side), {})
+            teams.append({"team": side_team.get((n, side)), "side": side, "buy": e.get("buy_type"),
+                          "equipment": e.get("equipment_value")})
+        rows.append({
+            "round": n, "winner": winner, "winner_side": r["winner_side"], "reason": r["reason_name"],
+            "first_kill_team": side_team.get((n, fk["attacker_side"])) if fk else None,
+            "bomb_planted": plants.get(n),
+            "teams": teams,
+            "score_after": dict(score),
+        })
+
+    # Halves: a new one starts when the sides swap, and at the start of every overtime period (teams keep
+    # their sides going into overtime, so the swap alone would merge it with the second half).
+    def _new_period(n: int) -> bool:
+        return bool(max_rounds) and n > max_rounds and (n - max_rounds - 1) % overtime_rounds == 0
+
+    halves: list[dict[str, Any]] = []
+    anchor = team_names[0] if team_names else None
+    for row in rows:
+        side = next((t["side"] for t in row["teams"] if t["team"] == anchor), None)
+        if not halves or halves[-1]["_side"] != side or _new_period(row["round"]):
+            halves.append({"_side": side, "rounds": [row["round"], row["round"]],
+                           "won": {t: 0 for t in team_names}, "sides": {}})
+        h = halves[-1]
+        h["rounds"][1] = row["round"]
+        if row["winner"] in h["won"]:
+            h["won"][row["winner"]] += 1
+        for t in row["teams"]:
+            if t["team"]:
+                h["sides"][t["team"]] = t["side"]
+    halves_out = [{"half": i + 1, "rounds": f"{h['rounds'][0]}-{h['rounds'][1]}",
+                   "overtime": bool(max_rounds) and h["rounds"][0] > max_rounds,
+                   "sides": h["sides"], "rounds_won": h["won"]} for i, h in enumerate(halves)]
+
+    by_buy: dict[str, dict[str, dict[str, int]]] = {t: {} for t in team_names}
+    for row in rows:
+        for t in row["teams"]:
+            if t["team"] not in by_buy or t["buy"] is None:
+                continue
+            b = by_buy[t["team"]].setdefault(t["buy"], {"played": 0, "won": 0})
+            b["played"] += 1
+            b["won"] += int(row["winner"] == t["team"])
+    return {
+        "rounds_played": len(rows),
+        "final_score": score,
+        "halves": halves_out,
+        "rounds_won_by_buy_type": by_buy,
+        "first_kill_conversion": {
+            t: {"first_kills": sum(1 for r in rows if r["first_kill_team"] == t),
+                "rounds_won_after_first_kill": sum(1 for r in rows if r["first_kill_team"] == t and r["winner"] == t)}
+            for t in team_names
+        },
+        "rounds": rows,
+        "note": "Buy types: pistol, eco, force, full (each team's freeze-end equipment). first_kill_team got the "
+                "round's first kill. Use get_round_summary only for the detail of a single round.",
+    }
+
+
+# ---------------------------------------------------------------- grenades thrown
+
+GRENADE_TYPES = ("smoke", "flash", "HE", "molotov/incendiary", "decoy")
+
+
+def grenade_usage(
+    throws: pl.DataFrame,
+    bomb: pl.DataFrame,
+    round_players: pl.DataFrame,
+    players: pl.DataFrame,
+    steamid: int,
+    rounds_played: int,
+) -> dict[str, Any]:
+    """What a player threw, split by side and by before/after the bomb plant, compared with teammates.
+
+    Smokes and molotovs before a plant on T side are execute utility; after a plant they hold the
+    post-plant. On CT side, before a plant is holding a site, after a plant is the retake.
+    """
+    plants = bomb.filter(pl.col("event") == "finish_plant").group_by("round_num").agg(pl.col("tick").min().alias("_plant"))
+    t = throws.join(plants, on="round_num", how="left").with_columns(
+        pl.when(pl.col("_plant").is_null()).then(pl.lit("no_plant"))
+        .when(pl.col("tick") < pl.col("_plant")).then(pl.lit("before_plant"))
+        .otherwise(pl.lit("after_plant")).alias("phase")
+    )
+    mine = t.filter(pl.col("steamid") == steamid)
+
+    def _counts(df: pl.DataFrame) -> dict[str, int]:
+        got = dict(df.group_by("grenade").len().iter_rows())
+        return {g: int(got.get(g, 0)) for g in GRENADE_TYPES}
+
+    by_side = {side: _counts(mine.filter(pl.col("side") == side)) for side in ("CT", "T")}
+    phases = {
+        side: {ph: _counts(mine.filter((pl.col("side") == side) & (pl.col("phase") == ph)))
+               for ph in ("before_plant", "after_plant", "no_plant")}
+        for side in ("CT", "T")
+    }
+    labels = team_labels(round_players, players)
+    my_team = labels.get(steamid)
+    mates = [sid for sid, team in labels.items() if team == my_team]
+    names = dict(players.select("steamid", "name").unique("steamid").iter_rows())
+    team_rows = []
+    for sid in mates:
+        c = _counts(t.filter(pl.col("steamid") == sid))
+        team_rows.append({"name": names.get(sid), "total": sum(c.values()), **c})
+    team_rows.sort(key=lambda r: (-r["total"], r["name"] or ""))
+    for i, r in enumerate(team_rows, 1):
+        r["team_rank_total"] = i
+    total = mine.height
+    return {
+        "thrown": _counts(mine),
+        "total_thrown": total,
+        "per_round": round(total / rounds_played, 2) if rounds_played else None,
+        "by_side": by_side,
+        "by_side_and_plant": phases,
+        "team_comparison": team_rows,
+        "plant_rule": "before_plant / after_plant are relative to the bomb plant in that round; no_plant means the "
+                      "bomb was never planted. T side before_plant = execute utility, CT side after_plant = retake utility.",
     }

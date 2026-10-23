@@ -15,6 +15,8 @@ Path syntax (dots separate steps, brackets select from lists):
 
 from __future__ import annotations
 
+import re
+
 from dataclasses import dataclass, field
 from decimal import ROUND_HALF_UP, Decimal
 from typing import Any, Literal
@@ -107,8 +109,10 @@ def values_match(actual: Any, expected: str) -> bool:
 
 def compare(actual: Any, expected: str) -> tuple[bool, str | None]:
     exp = str(expected).strip()
+    if isinstance(actual, list) and all(not isinstance(a, (dict, list)) for a in actual):
+        return _compare_list(actual, exp)
     if isinstance(actual, (dict, list)):
-        return False, "path points to a list/object; point it at a single value"
+        return False, "path points to a list of objects or an object; point it at a single value"
     if actual is None:
         return exp.lower() in {"null", "none", ""}, None
     if isinstance(actual, bool):
@@ -132,6 +136,21 @@ def compare(actual: Any, expected: str) -> tuple[bool, str | None]:
         rounded = Decimal(str(actual)).quantize(quantum, rounding=ROUND_HALF_UP)
         return rounded == Decimal(num).quantize(quantum, rounding=ROUND_HALF_UP), None
     return str(actual).strip().casefold() == exp.casefold(), None
+
+
+def _compare_list(actual: list[Any], exp: str) -> tuple[bool, str | None]:
+    """A list of plain values (e.g. round numbers) against "3, 4, 6" (order doesn't matter, nothing missing)."""
+    body = exp.strip().removeprefix("[").removesuffix("]")
+    items = [x.strip().strip("'\"") for x in re.split(r",|\band\b", body) if x.strip()]
+    if len(items) != len(actual):
+        return False, f"the list has {len(actual)} items, the claim lists {len(items)}"
+    left = list(actual)
+    for item in items:
+        hit = next((i for i, a in enumerate(left) if compare(a, item)[0]), None)
+        if hit is None:
+            return False, f"'{item}' is not in the list"
+        left.pop(hit)
+    return True, None
 
 
 # ---------------------------------------------------------------- verification
@@ -160,6 +179,8 @@ class Verification:
     results: list[ClaimResult]
     # Specific statements in the summary that no verified claim backs (filled in by the judge).
     summary_issues: list[str] = field(default_factory=list)
+    # Summary statements that conflict with a verified claim: wrong information, not just unchecked.
+    summary_contradictions: list[str] = field(default_factory=list)
 
     @property
     def failed(self) -> list[ClaimResult]:

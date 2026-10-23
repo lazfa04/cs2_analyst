@@ -45,8 +45,14 @@ VERDICT_TOOL = {
                 "description": "Specific statements from the summary that no verified claim backs. Empty if none.",
                 "items": {"type": "string"},
             },
+            "contradicted_summary_statements": {
+                "type": "array",
+                "description": "Statements from the summary that conflict with a verified claim (a different number, "
+                               "name or outcome). List them here, not under unbacked. Empty if none.",
+                "items": {"type": "string"},
+            },
         },
-        "required": ["verdicts", "unbacked_summary_statements"],
+        "required": ["verdicts", "unbacked_summary_statements", "contradicted_summary_statements"],
         "additionalProperties": False,
     },
 }
@@ -96,4 +102,28 @@ async def judge(llm: LLM, model: str, report: Report, verification: Verification
             r.note = v.get("reason")
             r.judged = True
     verification.summary_issues = [s for s in data.get("unbacked_summary_statements", []) if s.strip()]
-    trace.log("judge", verdicts=list(verdicts.values()), summary_issues=verification.summary_issues)
+    verification.summary_contradictions = [s for s in data.get("contradicted_summary_statements", []) if s.strip()]
+    trace.log("judge", verdicts=list(verdicts.values()), summary_issues=verification.summary_issues,
+              summary_contradictions=verification.summary_contradictions)
+
+
+def critic_feedback(verification: Verification) -> str | None:
+    """What the agent is told when the judge finds problems. None when there's nothing to fix."""
+    rejected = [r for r in verification.results if r.judged and r.status == "unsupported"]
+    if not (verification.summary_issues or verification.summary_contradictions or rejected):
+        return None
+    lines = ["A reviewer checked your report against your verified claims. Fix the problems below, then call "
+             "submit_report again with the full report. You may call tools first if you need a number."]
+    if verification.summary_contradictions:
+        lines.append("Summary statements that CONTRADICT your verified claims (correct them):")
+        lines += [f"- {s}" for s in verification.summary_contradictions]
+    if verification.summary_issues:
+        lines.append("Summary statements no verified claim backs (add a fact claim with a check, or cut them):")
+        lines += [f"- {s}" for s in verification.summary_issues]
+    if rejected:
+        lines.append("Interpretations the reviewer found unsupported (narrow them to what the facts show, "
+                     "or remove them):")
+        lines += [f"- {r.claim.id}: {r.claim.text} (reviewer: {r.note})" for r in rejected]
+    lines.append("For counts and lists, cite a tool field (total, rounds, by_attacker, summary...) instead of "
+                 "counting rows yourself.")
+    return "\n".join(lines)

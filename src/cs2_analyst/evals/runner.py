@@ -32,6 +32,7 @@ class RunConfig:
     judge_model: str | None = "claude-haiku-5-5"
     max_steps: int = 12
     max_revisions: int = 1
+    critic_revisions: int = 1
     concurrency: int = 3
     tag: str | None = None
     judge_prompt: str = DEFAULT_JUDGE_PROMPT
@@ -46,10 +47,13 @@ def result_record(case: Case, res: AgentResult) -> dict[str, Any]:
         "question": case.question,
         "stop_reason": res.stop_reason,
         "revisions": res.revisions,
+        "critic_revisions": res.critic_revisions,
         "error": None,
         "summary": res.report.summary if res.report else None,
         "summary_issues": v.summary_issues,
+        "summary_contradictions": v.summary_contradictions,
         "first_draft": res.first_draft,
+        "first_review": res.first_review,
         "final_counts": v.counts(),
         "claims": [
             {
@@ -143,7 +147,7 @@ async def run_eval(
             trace = Trace(run_id=case.id.replace("/", "__"))
             agent_cfg = AgentConfig(model=cfg.model, judge_model=cfg.judge_model, max_steps=cfg.max_steps,
                                     max_revisions=cfg.max_revisions, player=case.demo.player,
-                                    judge_prompt=cfg.judge_prompt)
+                                    judge_prompt=cfg.judge_prompt, critic_revisions=cfg.critic_revisions)
             try:
                 async with Toolbox.connect(server_factory()) as tb:
                     res = await run_agent(case.question, demo, llm, tb, agent_cfg, trace)

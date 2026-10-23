@@ -13,7 +13,8 @@ from .conftest import DEMO_ID
 
 EXPECTED_TOOLS = {
     "list_demos", "ingest_demo", "get_match_overview", "get_round_summary", "get_opening_duels",
-    "get_utility_stats", "find_kills", "get_faceit_profile", "get_recent_faceit_matches", "get_leetify_profile",
+    "get_utility_stats", "get_clutches", "get_round_list", "find_kills", "get_faceit_profile",
+    "get_recent_faceit_matches", "get_leetify_profile",
 }
 
 
@@ -47,8 +48,20 @@ def test_overview_through_protocol(server):
     assert body["score"]["Team B (started T)"]["rounds_won"] == 3
 
 
+def test_new_tools_through_protocol(server):
+    util = json.loads(call(server, "get_utility_stats", {"demo_id": DEMO_ID, "player": "alpha"}).content[0].text)
+    assert util["grenades"]["thrown"]["smoke"] == 2 and "costly_team_flashes" in util
+    cl = json.loads(call(server, "get_clutches", {"demo_id": DEMO_ID, "player": "bravo"}).content[0].text)
+    assert (cl["summary"]["played"], cl["summary"]["saved"], cl["summary"]["last_alive_not_clutch"]) == (1, 1, 1)
+    rl = json.loads(call(server, "get_round_list", {"demo_id": DEMO_ID}).content[0].text)
+    assert rl["final_score"] == {"Team A (started CT)": 1, "Team B (started T)": 3}
+    fk = json.loads(call(server, "find_kills", {"demo_id": DEMO_ID, "player": "alpha", "role": "victim"}).content[0].text)
+    assert fk["by_attacker"][0] == {"attacker": "delta", "count": 2, "rounds": [1, 4]}
+
+
 @pytest.mark.parametrize("name,args,hint", [
     ("get_utility_stats", {"demo_id": "nope", "player": "alpha"}, "Call ingest_demo"),
+    ("get_clutches", {"demo_id": DEMO_ID, "player": "zulu"}, "Players: "),
     ("get_opening_duels", {"demo_id": DEMO_ID, "player": "zulu"}, "Players: "),
     ("get_round_summary", {"demo_id": DEMO_ID, "round": 9}, "Valid rounds"),
     ("get_faceit_profile", {"nickname": "x"}, "FACEIT_API_KEY"),

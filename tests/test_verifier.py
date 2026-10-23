@@ -114,3 +114,20 @@ def test_cost_sonnet():
 def test_cost_haiku_long_context_tier_and_unknown_model():
     assert cost_usd("claude-haiku-5-5", 150_000, 0) == pytest.approx(0.075)  # $0.50 tier above 100k
     assert cost_usd("some-other-model", 1, 1) is None
+
+
+@pytest.mark.parametrize("expected,ok", [
+    ("3, 4, 6", True),
+    ("[6, 3, 4]", True),          # order doesn't matter
+    ("3, 4 and 6", True),
+    ("3, 4", False),              # missing one
+    ("3, 4, 6, 8", False),        # extra one
+    ("3, 4, 7", False),
+])
+def test_lists_of_plain_values_compare_as_sets(expected, ok):
+    assert compare([3, 4, 6], expected)[0] is ok
+
+
+def test_lists_of_objects_still_need_a_single_value():
+    ok, reason = compare([{"round": 3}], "3")
+    assert not ok and "single value" in reason

@@ -221,6 +221,21 @@ def test_eval_report_cli(cases_file, execute, monkeypatch, tmp_path, capsys):
     assert "3 judged interpretations aren't labelled yet" in capsys.readouterr().out
 
 
+def test_compare_cli_uses_only_shared_cases(cases_file, execute, monkeypatch, tmp_path, capsys):
+    from cs2_analyst.agent import cli
+    from cs2_analyst.evals import cli as eval_cli
+
+    runs = tmp_path / "runs"
+    execute(load_cases(cases_file, demos=["fake"]), ScriptedAgent(), run_dir=runs / "20261022-000000-big")
+    execute(load_cases(cases_file, demos=["fake"], questions=["overview"]), ScriptedAgent(),
+            run_dir=runs / "20261022-000001-small")
+    monkeypatch.setattr(eval_cli, "RUNS", runs)
+    monkeypatch.setattr(eval_cli, "LABELS", tmp_path / "labels.jsonl")
+    cli.main(["eval", "compare", "20261022-000000-big", "20261022-000001-small"])
+    out = capsys.readouterr().out
+    assert "Comparing the 1 cases both runs have" in out
+
+
 def test_label_cli_hides_judge_verdict_and_saves_answers(cases_file, execute, monkeypatch, tmp_path):
     from rich.prompt import Prompt
 
@@ -307,3 +322,27 @@ def test_root_cause_unwraps_nested_exception_groups():
     err = ConnectionError("network down")
     wrapped = ExceptionGroup("outer", [ExceptionGroup("inner", [err])])
     assert root_cause(wrapped) is err
+
+
+def test_metrics_separate_contradictions_and_measure_the_critic():
+    def rec(case_id, issues, contra, first, critic):
+        return {"case_id": case_id, "demo": "d", "question_id": "q", "question": "?", "stop_reason": "submitted",
+                "revisions": 0, "critic_revisions": critic, "error": None, "summary": "s",
+                "summary_issues": issues, "summary_contradictions": contra, "first_draft": {}, "first_review": first,
+                "final_counts": {}, "claims": [],
+                "usage": {"cost_usd": 0.01, "elapsed_s": 1.0, "tool_calls": 1, "llm_calls": 2,
+                          "input_tokens": 1, "cache_read_tokens": 0, "cache_write_tokens": 0}}
+    no_issue = {"summary_issues": 0, "summary_contradictions": 0, "rejected_interpretations": 0}
+    results = [
+        # flagged and contradicted on first review, fixed by the critic
+        rec("a", [], [], {"summary_issues": 1, "summary_contradictions": 1, "rejected_interpretations": 0}, 1),
+        # still contradicting after the critic
+        rec("b", [], ["x"], {"summary_issues": 0, "summary_contradictions": 1, "rejected_interpretations": 0}, 1),
+        rec("c", ["y"], [], no_issue, 0),
+        rec("d", [], [], no_issue, 0),
+    ]
+    m = compute(results)
+    assert m["summary_issues"]["answers_flagged_pct"] == 50.0, "unbacked OR contradicted counts as flagged"
+    assert m["summary_issues"]["answers_contradicting_pct"] == 25.0
+    assert m["critic"] == {"reviewed": 4, "revision_rate_pct": 50.0, "first_review_flagged_pct": 50.0,
+                           "first_review_contradicting_pct": 50.0}

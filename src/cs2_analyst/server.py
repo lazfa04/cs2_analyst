@@ -30,7 +30,7 @@ from .errors import AnalystError, DemoNotFound
 INSTRUCTIONS = """\
 Counter-Strike 2 analysis tools over parsed match demos plus FACEIT and Leetify stats.
 Workflow: list_demos (or ingest_demo with a .dem path) -> get_match_overview -> drill down with
-get_round_summary, get_opening_duels, get_utility_stats and find_kills.
+get_round_list, get_round_summary, get_opening_duels, get_utility_stats, get_clutches and find_kills.
 Every event in a result carries `round` and `tick`; cite them when you make a claim about the match.
 Sides are always "CT" or "T". Teams are labelled by starting side because sides swap at halftime.
 """
@@ -122,7 +122,8 @@ def build_server(
         Rank and compare players by rating, not kills. Start every match analysis here."""
         return analysis.match_overview(
             store.meta(demo_id), table(demo_id, "rounds"), table(demo_id, "stats"),
-            table(demo_id, "players"), table(demo_id, "round_players"),
+            table(demo_id, "players"), table(demo_id, "round_players"), kills=table(demo_id, "kills"),
+            damages=table(demo_id, "damages"), bomb=table(demo_id, "bomb"),
         )
 
     @mcp.tool(annotations=READ_ONLY)
@@ -156,11 +157,49 @@ def build_server(
     @mcp.tool(annotations=READ_ONLY)
     @guided
     def get_utility_stats(demo_id: DemoId, player: Player) -> dict[str, Any]:
-        """A player's utility usage: flashes thrown, enemies blinded and for how long, team-flashes and
-        self-flashes (with the worst ones by round and tick), and grenade damage by type. Team and self
-        flashes only count blinds of 1.5s or more; shorter ones are reported as minor."""
+        """A player's utility usage. Grenades thrown by type (smokes, flashes, HE, molotovs), split by side
+        and by before/after the bomb plant (T before plant = executes, CT after plant = retakes) and compared
+        with teammates. Flashes: enemies blinded and for how long, team and self flashes (1.5s or more;
+        shorter ones are minor), and which team flashes were costly (the teammate died while blind).
+        Grenade damage by type. Use it for any question about utility or a support role."""
         sid = steamid(demo_id, player)
-        return analysis.utility_summary(table(demo_id, "stats"), table(demo_id, "blinds"), table(demo_id, "damages"), sid)
+        flashes = analysis.utility_summary(
+            table(demo_id, "stats"), table(demo_id, "blinds"), table(demo_id, "damages"), sid,
+            kills=table(demo_id, "kills"), tick_rate=tick_rate(demo_id),
+        )
+        thrown = analysis.grenade_usage(
+            table(demo_id, "grenade_throws"), table(demo_id, "bomb"), table(demo_id, "round_players"),
+            table(demo_id, "players"), sid, flashes.get("rounds_played") or 0,
+        )
+        return {**flashes, "grenades": thrown}
+
+    @mcp.tool(annotations=READ_ONLY)
+    @guided
+    def get_clutches(
+        demo_id: DemoId,
+        player: Annotated[str | None, Field(description="Only this player's clutches. Omit for everyone's.")] = None,
+    ) -> dict[str, Any]:
+        """Clutches the way players count them: every round a player won as the last one alive (any odds) and
+        every real attempt they lost (any 1v1; a 1v2/1v3 where they got a kill, did damage, planted or went for
+        the defuse; a 1v4/1v5 where they got a kill or planted). Saves and hopeless or unattempted last-alive rounds are listed apart as not_clutches.
+        Each with round, situation (1v1, 1v2, ...), kills, outcome and survival; totals per situation and
+        per player. The scoreboard's clutch columns use the same rules."""
+        sid = steamid(demo_id, player) if player else None
+        return analysis.clutches(table(demo_id, "kills"), table(demo_id, "rounds"), table(demo_id, "round_players"), sid,
+                                 damages=table(demo_id, "damages"), bomb=table(demo_id, "bomb"))
+
+    @mcp.tool(annotations=READ_ONLY)
+    @guided
+    def get_round_list(demo_id: DemoId) -> dict[str, Any]:
+        """The whole match round by round in one compact table: winner, side, how it ended, which team got
+        the first kill, bomb plant site, each team's buy (pistol/eco/force/full) and the running score.
+        Also halves, each team's rounds won per buy type and first-kill conversion. Use it to explain
+        match flow, momentum or economy, instead of calling get_round_summary for many rounds."""
+        return analysis.round_list(
+            table(demo_id, "rounds"), table(demo_id, "kills"), table(demo_id, "round_players"),
+            table(demo_id, "players"), table(demo_id, "round_economy"), table(demo_id, "bomb"),
+            max_rounds=store.meta(demo_id).get("max_rounds"),
+        )
 
     @mcp.tool(annotations=READ_ONLY)
     @guided
@@ -179,10 +218,13 @@ def build_server(
         offset: Annotated[int, Field(ge=0, description="Pagination: pass next_offset from the previous call.")] = 0,
     ) -> dict[str, Any]:
         """Search the kill feed with filters and pagination. Exit frags after the round was decided are
-        excluded. Example: a player's untraded deaths = player=<name>, role=victim, traded=false."""
+        excluded. Besides the page of kills, it returns counts over ALL matches: total, the list of rounds,
+        a CT/T split, counts per attacker and per victim, and how many were openings, trades or in rounds the
+        killer's team won. Example: a player's untraded deaths = player=<name>, role=victim, traded=false;
+        who killed them most is by_attacker."""
         sid = steamid(demo_id, player) if player else None
         return analysis.find_kills(
-            table(demo_id, "kills"), steamid=sid, role=role, round_num=round, side=side, weapon=weapon,
+            table(demo_id, "kills"), rounds=table(demo_id, "rounds"), steamid=sid, role=role, round_num=round, side=side, weapon=weapon,
             headshot=headshot, traded=traded, limit=limit, offset=offset,
         )
 

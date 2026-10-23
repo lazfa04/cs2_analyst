@@ -1,13 +1,16 @@
 """The agent loop: model decides, tools run, results go back, repeat.
 
     question ──> model ──tool_use──> run tool (via MCP) ──tool_result──> model ──> ...
-                   └──submit_report──> verifier ──all good──> judge ──> done
+                   └──submit_report──> verifier ──all good──> judge ──all good──> done
+                                          │                     └──issues──> critique to model (critic_revisions times)
                                           └──failures──> feedback to model (max_revisions times)
 
 Guardrails, so a run can't go off the rails or burn money:
   * max_steps     model turns; on the last one it's told to submit with what it has
   * token_budget  total tokens across the run; hitting it also triggers the final step
   * max_revisions how many times failed claims are sent back for fixing
+  * critic_revisions how many times the judge's findings (unbacked or contradicted summary text,
+                  rejected interpretations) are sent back. Set 0 to only report them.
   * a plain-text answer is never accepted silently: the model is asked to submit a report,
     and if it still won't, the text is kept but marked as an unverified answer
 """
@@ -22,7 +25,7 @@ from typing import Any
 from pydantic import ValidationError
 
 from .findings import SUBMIT_REPORT, SUBMIT_REPORT_TOOL, Report
-from .judge import judge
+from .judge import critic_feedback, judge
 from .llm import LLM
 from .prompts import AGENT_PROMPT_VERSION, DEFAULT_JUDGE_PROMPT, FINAL_STEP, NO_REPORT, SYSTEM, first_message
 from .toolbox import Toolbox
@@ -36,6 +39,7 @@ class AgentConfig:
     judge_model: str | None = "claude-haiku-5-5"
     max_steps: int = 12
     max_revisions: int = 1
+    critic_revisions: int = 1
     token_budget: int = 400_000
     max_tokens_per_turn: int = 16_000
     player: str | None = None
@@ -55,6 +59,17 @@ class AgentResult:
     # Claim statuses of the FIRST report, before any revision. It's the no-verifier baseline:
     # what the user would have seen if nothing checked the agent's work.
     first_draft: dict[str, int] | None = None
+    # The judge's findings on the first report it reviewed, before any critic revision.
+    first_review: dict[str, int] | None = None
+    critic_revisions: int = 0
+
+
+def _review_counts(v: Verification) -> dict[str, int]:
+    return {
+        "summary_issues": len(v.summary_issues),
+        "summary_contradictions": len(v.summary_contradictions),
+        "rejected_interpretations": sum(1 for r in v.results if r.judged and r.status == "unsupported"),
+    }
 
 
 def _tool_result(tool_use_id: str, content: str, is_error: bool = False) -> dict[str, Any]:
@@ -79,7 +94,9 @@ async def run_agent(question: str, demo: dict[str, Any], llm: LLM, toolbox: Tool
     report: Report | None = None
     verification = Verification([])
     revisions, stop_reason, final_turn_sent, nudged = 0, "step_limit", False, False
+    critiques, judged_final = 0, False
     first_draft: dict[str, int] | None = None
+    first_review: dict[str, int] | None = None
 
     step = 0
     while step < cfg.max_steps + 1:  # +1: one grace turn after the "submit now" message
@@ -138,9 +155,21 @@ async def run_agent(question: str, demo: dict[str, Any], llm: LLM, toolbox: Tool
             if verification.failed and revisions < cfg.max_revisions and not final_turn_sent:
                 revisions += 1
                 results.append(_tool_result(tu.id, feedback(verification)))
-            else:
-                done = True
-                stop_reason = "submitted"
+                continue
+            if cfg.judge_model:
+                await judge(llm, cfg.judge_model, report, verification, trace, cfg.judge_prompt)
+                judged_final = True
+                if first_review is None:
+                    first_review = _review_counts(verification)
+                critique = critic_feedback(verification)
+                if critique and critiques < cfg.critic_revisions and not final_turn_sent:
+                    critiques += 1
+                    judged_final = False
+                    trace.log("critic_revision", revision=critiques, **_review_counts(verification))
+                    results.append(_tool_result(tu.id, critique))
+                    continue
+            done = True
+            stop_reason = "submitted"
 
         if done:
             break
@@ -156,9 +185,12 @@ async def run_agent(question: str, demo: dict[str, Any], llm: LLM, toolbox: Tool
             break  # grace turn used up without a report
         messages.append({"role": "user", "content": content})
 
-    if report is not None and cfg.judge_model and stop_reason == "submitted":
+    # A report accepted without passing through the judge above (e.g. the last revision ran out of
+    # steps) still gets its verdicts.
+    if report is not None and cfg.judge_model and stop_reason == "submitted" and not judged_final:
         await judge(llm, cfg.judge_model, report, verification, trace, cfg.judge_prompt)
 
-    trace.log("run_end", stop_reason=stop_reason, revisions=revisions,
+    trace.log("run_end", stop_reason=stop_reason, revisions=revisions, critic_revisions=critiques,
               counts=verification.counts(), **trace.summary())
-    return AgentResult(question, demo, report, verification, stop_reason, revisions, trace, ledger, first_draft)
+    return AgentResult(question, demo, report, verification, stop_reason, revisions, trace, ledger, first_draft,
+                       first_review, critiques)

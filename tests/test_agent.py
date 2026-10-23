@@ -238,10 +238,12 @@ def test_judge_flags_unbacked_summary_statements(run):
         [tool("get_match_overview", demo_id=DEMO_ID)],
         [report(fact("c1", "alpha got 2 kills", ("t1", "scoreboard[name=alpha].kills", "2")),
                 summary="alpha got 2 kills and was the best player on his team.")],
-        [tool("submit_verdicts", verdicts=[], unbacked_summary_statements=["alpha was the best player on his team"])],
+        [tool("submit_verdicts", verdicts=[], unbacked_summary_statements=["alpha was the best player on his team"],
+              contradicted_summary_statements=[])],
     )
-    res = run(llm)
+    res = run(llm, critic_revisions=0)  # report only, don't send it back
     assert res.verification.summary_issues == ["alpha was the best player on his team"]
+    assert res.critic_revisions == 0 and res.first_review["summary_issues"] == 1
     judge_input = json.loads(llm.calls[2]["messages"][0]["content"])
     assert judge_input["summary"].startswith("alpha got 2 kills")
     assert judge_input["verified_claims"] == ["alpha got 2 kills"]
@@ -249,3 +251,40 @@ def test_judge_flags_unbacked_summary_statements(run):
     console = Console(record=True, width=200, color_system=None)
     cli.render(res, console)
     assert "not backed by a verified claim" in console.export_text()
+
+
+def test_critic_sends_judge_findings_back_and_the_agent_fixes_them(run):
+    """Unbacked or contradicted summary text goes back to the agent once, like failed facts do."""
+    claim = fact("c1", "alpha got 2 kills", ("t1", "scoreboard[name=alpha].kills", "2"))
+    llm = FakeLLM(
+        [tool("get_match_overview", demo_id=DEMO_ID)],
+        [report(claim, summary="alpha got 3 kills and was the best player on his team.")],
+        [tool("submit_verdicts", verdicts=[], unbacked_summary_statements=["alpha was the best player on his team"],
+              contradicted_summary_statements=["alpha got 3 kills"])],
+        [report(claim, summary="alpha got 2 kills.")],
+        [tool("submit_verdicts", verdicts=[], unbacked_summary_statements=[], contradicted_summary_statements=[])],
+    )
+    res = run(llm)
+    critique = last_user_text(llm.calls[3])
+    assert "CONTRADICT" in critique and "alpha got 3 kills" in critique
+    assert "alpha was the best player on his team" in critique
+    assert res.critic_revisions == 1 and res.stop_reason == "submitted"
+    assert res.first_review == {"summary_issues": 1, "summary_contradictions": 1, "rejected_interpretations": 0}
+    assert res.report.summary == "alpha got 2 kills." and not res.verification.summary_issues
+    assert not llm.turns, "exactly two judge calls: one per submitted report"
+
+
+def test_contradictions_are_shown_apart_from_unbacked_text(run):
+    from rich.console import Console
+
+    llm = FakeLLM(
+        [tool("get_match_overview", demo_id=DEMO_ID)],
+        [report(fact("c1", "alpha got 2 kills", ("t1", "scoreboard[name=alpha].kills", "2")), summary="alpha got 3 kills.")],
+        [tool("submit_verdicts", verdicts=[], unbacked_summary_statements=[],
+              contradicted_summary_statements=["alpha got 3 kills"])],
+    )
+    res = run(llm, critic_revisions=0)
+    console = Console(record=True, width=200, color_system=None)
+    cli.render(res, console)
+    assert "CONTRADICTS a verified claim" in console.export_text()
+    assert cli.to_json(res)["summary_contradictions"] == ["alpha got 3 kills"]

@@ -43,6 +43,8 @@ def add_parser(sub: argparse._SubParsersAction) -> None:
     r.add_argument("--judge-prompt", choices=sorted(JUDGE_PROMPTS), default=DEFAULT_JUDGE_PROMPT)
     r.add_argument("--max-steps", type=int, default=12)
     r.add_argument("--max-revisions", type=int, default=1)
+    r.add_argument("--critic-revisions", type=int, default=1,
+                   help="Times the judge's findings go back to the agent (0 = report only, the pre-v3 behaviour).")
     r.add_argument("--concurrency", type=int, default=3)
     r.add_argument("--tag", help="Name for this run, e.g. 'baseline' or 'prompt-v2'.")
     r.add_argument("--resume", help="Run name to resume: only missing or failed cases run.")
@@ -54,6 +56,7 @@ def add_parser(sub: argparse._SubParsersAction) -> None:
     c = esub.add_parser("compare", help="Compare two runs side by side.")
     c.add_argument("a")
     c.add_argument("b", nargs="?", default="latest")
+    c.add_argument("--all", action="store_true", help="Compare every case, not just the ones both runs have.")
 
     rj = esub.add_parser("rejudge", help="Re-run only the judge on a past run (same items, new judge).")
     rj.add_argument("run", help="The run whose answers to re-judge.")
@@ -108,6 +111,7 @@ def cmd_run(args: argparse.Namespace, console: Console) -> None:
 
     cfg = RunConfig(model=args.model, judge_model=None if args.no_judge else args.judge_model,
                     max_steps=args.max_steps, max_revisions=args.max_revisions,
+                    critic_revisions=args.critic_revisions,
                     concurrency=args.concurrency, tag=args.tag, judge_prompt=args.judge_prompt)
     settings = get_settings()
     done = [0]
@@ -189,7 +193,16 @@ def run(args: argparse.Namespace) -> None:
     elif args.eval_command == "compare":
         a, b = _resolve_run(args.a), _resolve_run(args.b)
         labels = L.load_labels(LABELS)
-        render_compare(a.name, compute(load_results(a), labels), b.name, compute(load_results(b), labels), console)
+        ra, rb = load_results(a), load_results(b)
+        if not args.all:
+            # Only the cases both runs answered, so a bigger question set doesn't skew the numbers.
+            shared = {r["case_id"] for r in ra} & {r["case_id"] for r in rb}
+            extra_a, extra_b = len(ra) - len(shared), len(rb) - len(shared)
+            ra, rb = [r for r in ra if r["case_id"] in shared], [r for r in rb if r["case_id"] in shared]
+            if extra_a or extra_b:
+                console.print(f"[dim]Comparing the {len(shared)} cases both runs have "
+                              f"({extra_a} only in {a.name}, {extra_b} only in {b.name}; --all to include them).[/]")
+        render_compare(a.name, compute(ra, labels), b.name, compute(rb, labels), console)
     elif args.eval_command == "rejudge":
         cmd_rejudge(args, console)
     elif args.eval_command == "label":

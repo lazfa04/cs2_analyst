@@ -67,6 +67,7 @@ async def rejudge_run(src: Path, dst: Path, llm: LLM, model: str, prompt: str, c
                 r = by_id[c["id"]]
                 c.update(status=r.status, judged=r.judged, note=r.note)
             new["summary_issues"] = verification.summary_issues
+            new["summary_contradictions"] = verification.summary_contradictions
             new["final_counts"] = verification.counts()
             new["judge_usage"] = trace.summary()
         out[rec["case_id"]] = new

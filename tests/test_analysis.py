@@ -168,3 +168,180 @@ def test_fire_is_labelled_molotov_incendiary_not_inferno(tables):
     res = A.find_kills(kills, weapon="molotov", limit=1)
     assert res["total"] == 8 and res["kills"][0]["weapon"] == "molotov/incendiary"
     assert A.find_kills(kills, weapon="inferno")["total"] == 8, "the engine name still works as a filter"
+
+
+# ---------------------------------------------------------------- counts so the model never tallies by hand
+
+def test_find_kills_breakdown_counts_all_matches_not_just_the_page(tables):
+    res = A.find_kills(tables("kills"), rounds=tables("rounds"), steamid=1, role="victim", limit=1)
+    assert res["returned"] == 1 and res["total"] == 3
+    assert res["rounds"] == [1, 2, 4]
+    assert res["by_attacker"] == [{"attacker": "delta", "count": 2, "rounds": [1, 4]},
+                                  {"attacker": "charlie", "count": 1, "rounds": [2]}]
+    # alpha was CT in rounds 1-2 and T in round 4: the split is by the VICTIM's side here
+    assert res["by_side"] == {"CT": 2, "T": 1} and "victim" in res["by_side_is_side_of"]
+    # r2 and r4 deaths were openings; the r1 death was a trade; killers won r2 and r4
+    assert res["tags"] == {"openings": 2, "trades": 1, "in_rounds_the_killer_won": 2}
+
+
+def test_find_kills_tags_each_kill(tables):
+    kills = {k["tick"]: k for k in A.find_kills(tables("kills"), rounds=tables("rounds"), limit=50)["kills"]}
+    assert kills[400]["opening"] and kills[400]["attacker_won_round"]
+    assert not kills[450]["opening"] and kills[450]["is_trade"] and not kills[450]["attacker_won_round"]
+    assert A.find_kills(tables("kills"), rounds=tables("rounds"))["exit_frags_excluded"] == 1
+
+
+# ---------------------------------------------------------------- clutches
+
+def test_last_alive_situations_replay_each_round(tables):
+    raw = A.last_alive_situations(tables("kills"), tables("rounds"), tables("round_players"))
+    assert len(raw) == 6, "every round of a 2v2 leaves someone last alive; r1 and r4 have one per side"
+
+
+def test_clutches_count_like_a_player_would(tables):
+    c = A.clutches(tables("kills"), tables("rounds"), tables("round_players"))
+    # r1 delta 1v2, 1 kill, died: lost.  r1 bravo 1v1 won.  r2 bravo 1v2, no kill, died: last alive.
+    # r3 delta 1v2 won.  r4 bravo 1v2, 1 kill, survived the lost round: saved.  r4 charlie 1v1 won.
+    assert (c["summary"]["played"], c["summary"]["won"], c["summary"]["lost"]) == (4, 3, 1)
+    assert (c["summary"]["saved"], c["summary"]["last_alive_not_clutch"]) == (1, 1)
+    by = {p["name"]: p for p in c["by_player"]}
+    assert (by["bravo"]["played"], by["bravo"]["won"], by["bravo"]["saved"], by["bravo"]["last_alive_not_clutch"]) == (1, 1, 1, 1)
+    assert (by["delta"]["played"], by["delta"]["won"]) == (2, 1)
+    assert by["delta"]["by_situation"] == {"1v2": {"played": 2, "won": 1}}
+
+
+def test_clutches_both_sides_can_clutch_in_one_round(tables):
+    r1 = [c for c in A.clutches(tables("kills"), tables("rounds"), tables("round_players"))["clutches"] if c["round"] == 1]
+    # delta is left 1v2 and gets a kill; that leaves bravo 1v1, who wins it
+    assert [(c["player"], c["situation"], c["kills"], c["outcome"]) for c in r1] == [
+        ("delta", "1v2", 1, "lost"), ("bravo", "1v1", 1, "won")]
+
+
+def test_clutches_for_one_player_lists_saves_and_last_alive_apart(tables):
+    c = A.clutches(tables("kills"), tables("rounds"), tables("round_players"), steamid=2)
+    assert [x["round"] for x in c["clutches"]] == [1] and c["by_player"] is None
+    assert [(x["round"], x["outcome"]) for x in c["not_clutches"]] == [(2, "last_alive"), (4, "saved")]
+
+
+@pytest.mark.parametrize("vs,kills,won,survived,outcome", [
+    (5, 0, True, True, "won"),          # a won 1v5 is a clutch won
+    (5, 0, False, False, "last_alive"), # a lost 1v5 without a fight isn't a lost clutch
+    (4, 2, False, False, "lost"),       # ...but a 1v4 with kills is an attempt (m0NESY, Anubis r18)
+    (4, 0, False, False, "last_alive"),
+    (2, 1, False, True, "saved"),       # survived a lost round: saved the gun
+    (2, 1, False, False, "lost"),       # an attempt: got a kill, then died
+    (3, 0, False, False, "last_alive"), # died without a kill
+    (1, 0, False, False, "lost"),       # a 1v1 is always an attempt
+    (3, 0, True, False, "won"),         # won by the bomb after dying still counts
+])
+def test_clutch_outcome_rules(vs, kills, won, survived, outcome):
+    assert A.clutch_outcome({"vs": vs, "kills": kills, "won": won, "survived": survived}) == outcome
+
+
+@pytest.mark.parametrize("attempt", [["planted"], ["went_for_defuse"], ["damage"]])
+def test_an_attempt_without_a_kill_is_still_a_lost_clutch(attempt):
+    assert A.clutch_outcome({"vs": 2, "kills": 0, "won": False, "survived": False, "attempt": attempt}) == "lost"
+
+
+@pytest.mark.parametrize("attempt,outcome", [(["planted"], "lost"), (["damage"], "last_alive"),
+                                             (["went_for_defuse"], "last_alive")])
+def test_at_1v4_odds_only_a_kill_or_a_plant_counts_as_an_attempt(attempt, outcome):
+    assert A.clutch_outcome({"vs": 4, "kills": 0, "won": False, "survived": False, "attempt": attempt}) == outcome
+
+
+def _bravo_r2(tables, damages=None, bomb=None):
+    """Round 2: bravo (CT) is left 1v2 at tick 1500 and dies at 1600 without a kill."""
+    raw = A.last_alive_situations(tables("kills"), tables("rounds"), tables("round_players"), damages, bomb)
+    return next(c for c in raw if c["round"] == 2)
+
+
+def test_damage_after_becoming_last_alive_is_an_attempt(tables):
+    assert _bravo_r2(tables)["attempt"] == [] and A.clutch_outcome(_bravo_r2(tables)) == "last_alive"
+    dmg = pl.DataFrame({"tick": [1550], "round_num": [2], "attacker_steamid": [2], "victim_side": ["T"],
+                        "dmg_health": [27], "after_round_end": [False]},
+                       schema_overrides={"attacker_steamid": pl.UInt64, "round_num": pl.Int32})
+    c = _bravo_r2(tables, damages=dmg)
+    assert c["attempt"] == ["damage"] and A.clutch_outcome(c) == "lost"
+
+
+@pytest.mark.parametrize("plant_xy,attempted", [((300.0, 300.0), True), ((3000.0, 3000.0), False)])
+def test_ct_dying_near_the_planted_bomb_went_for_the_defuse(tables, plant_xy, attempted):
+    # bravo dies at (110, 210); the bomb was planted at tick 1550, before he died
+    bomb = pl.DataFrame({"tick": [1550], "round_num": [2], "event": ["finish_plant"], "steamid": [3],
+                         "x": [plant_xy[0]], "y": [plant_xy[1]]},
+                        schema_overrides={"steamid": pl.UInt64, "round_num": pl.Int32})
+    c = _bravo_r2(tables, bomb=bomb)
+    assert ("went_for_defuse" in c["attempt"]) is attempted
+
+
+def test_t_planting_after_becoming_last_alive_is_an_attempt():
+    bomb = pl.DataFrame({"tick": [1550], "round_num": [2], "event": ["start_plant"], "steamid": [2]},
+                        schema_overrides={"steamid": pl.UInt64, "round_num": pl.Int32})
+    clutch = {"round": 2, "tick": 1500, "_sid": 2, "side": "T", "kills": 0}
+    assert A._attempt_signals(clutch, None, bomb) == ["planted"]
+
+
+def test_scoreboard_clutch_columns_use_the_same_rules(tables, store):
+    ov = A.match_overview(store.meta("fakedemo0001"), tables("rounds"), tables("stats"), tables("players"),
+                          tables("round_players"), kills=tables("kills"))
+    board = {r["name"]: (r["clutches_won"], r["clutches_played"]) for r in ov["scoreboard"]}
+    assert board == {"alpha": (0, 0), "bravo": (1, 1), "charlie": (1, 1), "delta": (1, 2)}
+
+
+# ---------------------------------------------------------------- costly team flashes
+
+def test_team_flash_is_costly_only_if_teammate_died_while_blind(tables):
+    def deaths(tick):
+        return pl.DataFrame({"victim_steamid": [2], "tick": [tick], "attacker_name": ["charlie"]},
+                            schema_overrides={"victim_steamid": pl.UInt64})
+    # bravo is blinded at tick 310 for 1.5s: blind + 0.5s grace runs to tick 438
+    costly = A.utility_summary(tables("stats"), tables("blinds"), tables("damages"), 1, kills=deaths(350))
+    assert costly["costly_team_flashes"] == 1
+    assert costly["costly_team_flash_list"][0]["killed_by"] == "charlie"
+    assert costly["worst_team_flashes"][0]["teammate_died_while_blind"] is True
+    harmless = A.utility_summary(tables("stats"), tables("blinds"), tables("damages"), 1, kills=deaths(500))
+    assert harmless["costly_team_flashes"] == 0 and harmless["teammates_flashed"] == 1
+
+
+# ---------------------------------------------------------------- grenades thrown
+
+def test_grenade_usage_splits_by_side_and_plant(tables):
+    g = A.grenade_usage(tables("grenade_throws"), tables("bomb"), tables("round_players"), tables("players"), 1, 4)
+    assert g["thrown"] == {"smoke": 2, "flash": 1, "HE": 1, "molotov/incendiary": 0, "decoy": 0}
+    assert g["total_thrown"] == 4 and g["per_round"] == 1.0, "rifle shot and warmup throw ignored"
+    assert g["by_side_and_plant"]["CT"]["after_plant"]["smoke"] == 1, "r2 smoke after the plant is a retake smoke"
+    assert g["by_side_and_plant"]["CT"]["no_plant"]["flash"] == 1
+    assert g["by_side"]["T"]["HE"] == 1
+    assert [r["name"] for r in g["team_comparison"]] == ["alpha", "bravo"]
+    assert g["team_comparison"][0]["team_rank_total"] == 1
+
+
+def test_grenade_usage_execute_vs_post_plant(tables):
+    g = A.grenade_usage(tables("grenade_throws"), tables("bomb"), tables("round_players"), tables("players"), 3, 4)
+    assert g["by_side_and_plant"]["T"]["before_plant"]["smoke"] == 1
+    assert g["by_side_and_plant"]["T"]["after_plant"]["molotov/incendiary"] == 1
+
+
+# ---------------------------------------------------------------- round list
+
+def test_round_list_score_halves_and_economy(tables):
+    rl = A.round_list(tables("rounds"), tables("kills"), tables("round_players"), tables("players"),
+                      tables("round_economy"), tables("bomb"))
+    a, b = "Team A (started CT)", "Team B (started T)"
+    assert rl["final_score"] == {a: 1, b: 3}
+    assert rl["halves"] == [
+        {"half": 1, "rounds": "1-2", "overtime": False, "sides": {a: "CT", b: "T"}, "rounds_won": {a: 1, b: 1}},
+        {"half": 2, "rounds": "3-4", "overtime": False, "sides": {a: "T", b: "CT"}, "rounds_won": {a: 0, b: 2}},
+    ]
+    assert rl["rounds_won_by_buy_type"][a] == {"pistol": {"played": 1, "won": 1}, "eco": {"played": 1, "won": 0}}
+    assert rl["first_kill_conversion"][b] == {"first_kills": 2, "rounds_won_after_first_kill": 2}
+    r2 = rl["rounds"][1]
+    assert r2["bomb_planted"] == "A" and r2["winner"] == b and r2["score_after"] == {a: 1, b: 1}
+
+
+def test_round_list_overtime_starts_a_new_half_even_without_a_side_swap(tables):
+    # Pretend regulation was 3 rounds with 1-round overtime halves: round 4 keeps round 3's sides
+    # but is overtime, so it must not be merged into the second half.
+    rl = A.round_list(tables("rounds"), tables("kills"), tables("round_players"), tables("players"),
+                      tables("round_economy"), tables("bomb"), max_rounds=3, overtime_rounds=1)
+    assert [(h["rounds"], h["overtime"]) for h in rl["halves"]] == [("1-2", False), ("3-3", False), ("4-4", True)]

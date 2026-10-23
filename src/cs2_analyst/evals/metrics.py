@@ -38,6 +38,25 @@ def _pct(n: int, d: int) -> float | None:
     return round(100 * n / d, 1) if d else None
 
 
+def _flagged(rec: dict[str, Any]) -> bool:
+    return bool(rec.get("summary_issues") or rec.get("summary_contradictions"))
+
+
+def _critic(ok: list[dict[str, Any]]) -> dict[str, Any]:
+    """Before vs after the critic revision: the judge's first review is the no-critic baseline."""
+    reviewed = [r for r in ok if r.get("first_review") is not None]
+    if not reviewed:
+        return {"reviewed": 0}
+    first_flagged = sum(1 for r in reviewed if r["first_review"]["summary_issues"] + r["first_review"]["summary_contradictions"])
+    first_contra = sum(1 for r in reviewed if r["first_review"]["summary_contradictions"])
+    return {
+        "reviewed": len(reviewed),
+        "revision_rate_pct": _pct(sum(1 for r in reviewed if r.get("critic_revisions")), len(reviewed)),
+        "first_review_flagged_pct": _pct(first_flagged, len(reviewed)),
+        "first_review_contradicting_pct": _pct(first_contra, len(reviewed)),
+    }
+
+
 def _claims(rec: dict[str, Any], kind: str) -> list[dict[str, Any]]:
     return [c for c in rec.get("claims") or [] if c["kind"] == kind]
 
@@ -86,9 +105,12 @@ def compute(results: list[dict[str, Any]], labels: dict[str, dict[str, Any]] | N
             "rejected_by_verifier_pct": _pct(interp_status["rejected_by_verifier"], len(interps)),
         },
         "summary_issues": {
-            "answers_flagged_pct": _pct(sum(1 for r in ok if r.get("summary_issues")), len(ok)),
-            "total": sum(len(r.get("summary_issues") or []) for r in ok),
+            # flagged = anything unbacked OR contradicted (older runs put contradictions under unbacked)
+            "answers_flagged_pct": _pct(sum(1 for r in ok if _flagged(r)), len(ok)),
+            "answers_contradicting_pct": _pct(sum(1 for r in ok if r.get("summary_contradictions")), len(ok)),
+            "total": sum(len(r.get("summary_issues") or []) + len(r.get("summary_contradictions") or []) for r in ok),
         },
+        "critic": _critic(ok),
         "ops": {
             "total_cost_usd": round(sum(costs), 4) if costs else None,
             "avg_cost_usd": round(statistics.mean(costs), 4) if costs else None,
@@ -113,7 +135,7 @@ def compute(results: list[dict[str, Any]], labels: dict[str, dict[str, Any]] | N
             "cases": len(recs),
             "facts_verified_pct": _pct(sum(c["status"] == "verified" for c in qf), len(qf)),
             "interpretations_supported_pct": _pct(sum(c["status"] == "supported" for c in qi), len(qi)),
-            "summary_flagged": sum(1 for r in recs if r.get("summary_issues")),
+            "summary_flagged": sum(1 for r in recs if _flagged(r)),
             "avg_cost_usd": round(statistics.mean(qc), 4) if qc else None,
         }
     return metrics

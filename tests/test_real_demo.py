@@ -86,3 +86,34 @@ def test_agent_checks_resolve_against_real_tool_output(real):
 
     res = anyio.run(go)
     assert [r.status for r in res.verification.results] == ["verified"] * 4
+
+
+def test_clutches_and_grenades_agree_with_the_scoreboard(real):
+    """Independent checks of the new tools against awpy's own per-player stats."""
+    import polars as pl
+
+    store, did = real
+    t = lambda n: store.table(did, n)
+    stats = {r["name"]: r for r in t("stats").iter_rows(named=True)}
+    throws = t("grenade_throws").filter(pl.col("grenade") == "flash").group_by("name").len()
+    assert {n: c for n, c in throws.iter_rows()} == {n: s["flashes_thrown"] for n, s in stats.items() if s["flashes_thrown"]}
+
+    # awpy's scoreboard counts every last-alive situation, including ones created by deaths after the round
+    # was decided. Replaying with those deaths too, our raw situations match it exactly for every player.
+    with_exit_frags = t("kills").with_columns(pl.lit(False).alias("after_round_end"))
+    raw: dict[str, list[int]] = {}
+    for c in A.last_alive_situations(with_exit_frags, t("rounds"), t("round_players")):
+        w, p = raw.setdefault(c["player"], [0, 0])
+        raw[c["player"]] = [w + int(c["won"]), p + 1]
+    assert raw == {n: [s["clutches_won"], s["clutches_played"]] for n, s in stats.items() if s["clutches_played"]}
+    # ...without them, Zoob1119's round-18 "1v1" (created by a post-round kill) disappears.
+    strict = A.last_alive_situations(t("kills"), t("rounds"), t("round_players"))
+    assert sum(c["player"] == "Zoob1119" for c in strict) == stats["Zoob1119"]["clutches_played"] - 1
+
+
+def test_overtime_halves(real):
+    store, did = real
+    t = lambda n: store.table(did, n)
+    rl = A.round_list(t("rounds"), t("kills"), t("round_players"), t("players"), t("round_economy"), t("bomb"),
+                      max_rounds=store.meta(did)["max_rounds"])
+    assert [h["rounds"] for h in rl["halves"]] == ["1-12", "13-24", "25-27", "28-30"]

@@ -69,7 +69,7 @@ async def ask(args: argparse.Namespace) -> AgentResult:
             cfg = AgentConfig(
                 model=args.model, judge_model=None if args.no_judge else args.judge_model,
                 max_steps=args.max_steps, max_revisions=args.max_revisions, player=args.player,
-                judge_prompt=args.judge_prompt,
+                judge_prompt=args.judge_prompt, critic_revisions=args.critic_revisions,
             )
             try:
                 return await run_agent(args.question, demo, AnthropicLLM(), toolbox, cfg)
@@ -98,6 +98,10 @@ def render(result: AgentResult, console: Console) -> None:
             ev = ", ".join(f"{c.call_id}:{c.path}" for c in r.checks) or ("supports " + ", ".join(r.claim.supports))
             t.add_row(ICONS[r.status], escape(r.claim.text), escape(ev))
         console.print(t)
+    if result.verification.summary_contradictions:
+        console.print("[bold]In the answer but CONTRADICTS a verified claim:[/]")
+        for issue in result.verification.summary_contradictions:
+            console.print(f"  [red]✗[/] {escape(issue)}")
     if result.verification.summary_issues:
         console.print("[bold]In the answer but not backed by a verified claim:[/]")
         for issue in result.verification.summary_issues:
@@ -113,7 +117,8 @@ def render(result: AgentResult, console: Console) -> None:
     console.print(
         f"[dim]{s['llm_calls']} model calls · {s['tool_calls']} tool calls · "
         f"{s['input_tokens'] + s['cache_read_tokens'] + s['cache_write_tokens']:,} in / {s['output_tokens']:,} out tokens "
-        f"({s['cache_read_tokens']:,} cached) · {cost} · {s['elapsed_s']}s · revisions {result.revisions}[/]"
+        f"({s['cache_read_tokens']:,} cached) · {cost} · {s['elapsed_s']}s · revisions {result.revisions}"
+        f" · critic revisions {result.critic_revisions}[/]"
     )
 
 
@@ -123,6 +128,8 @@ def to_json(result: AgentResult) -> dict:
         "demo": result.demo,
         "stop_reason": result.stop_reason,
         "revisions": result.revisions,
+        "critic_revisions": result.critic_revisions,
+        "first_review": result.first_review,
         "summary": result.report.summary if result.report else None,
         "claims": [
             {"id": r.claim.id, "kind": r.claim.kind, "text": r.claim.text, "status": r.status, "note": r.note,
@@ -130,6 +137,7 @@ def to_json(result: AgentResult) -> dict:
             for r in result.verification.results
         ],
         "summary_issues": result.verification.summary_issues,
+        "summary_contradictions": result.verification.summary_contradictions,
         "usage": result.trace.summary(),
     }
 
@@ -147,6 +155,8 @@ def main(argv: list[str] | None = None) -> None:
     a.add_argument("--judge-prompt", choices=sorted(JUDGE_PROMPTS), default=DEFAULT_JUDGE_PROMPT)
     a.add_argument("--max-steps", type=int, default=12)
     a.add_argument("--max-revisions", type=int, default=1)
+    a.add_argument("--critic-revisions", type=int, default=1,
+                   help="How many times the judge's findings go back to the agent for a fix (0 = only report them).")
     a.add_argument("--json", action="store_true", help="Print the result as JSON.")
     a.add_argument("--trace-dir", default=os.getenv("CS2_TRACE_DIR", "traces"))
     from ..evals import cli as eval_cli

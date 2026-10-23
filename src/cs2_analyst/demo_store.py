@@ -12,6 +12,7 @@ copies of one demo map to the same id.
 
 from __future__ import annotations
 
+import gc
 import hashlib
 import json
 import time
@@ -25,9 +26,18 @@ from .errors import AnalystError, DemoNotFound
 from .sides import norm_side
 
 # Bump when the cached table layout changes; older caches get re-ingested.
-SCHEMA_VERSION = 1
+# v2: added grenade_throws.
+SCHEMA_VERSION = 2
 
-TABLES = ("rounds", "kills", "damages", "blinds", "bomb", "stats", "players", "round_economy", "round_players")
+TABLES = ("rounds", "kills", "damages", "blinds", "bomb", "stats", "players", "round_economy", "round_players",
+          "grenade_throws")
+
+# Grenade throws come from the weapon_fire events (awpy's `shots`), which always name the thrower.
+# awpy's own grenade/smoke tables leave the thrower empty on many demos.
+THROW_TYPES = {
+    "weapon_smokegrenade": "smoke", "weapon_flashbang": "flash", "weapon_hegrenade": "HE",
+    "weapon_molotov": "molotov/incendiary", "weapon_incgrenade": "molotov/incendiary", "weapon_decoy": "decoy",
+}
 
 # Per-player state captured at each round's freeze-end tick (the finished buy).
 SNAPSHOT_COLS = [
@@ -51,6 +61,7 @@ class DemoLike(Protocol):
     stats: pl.DataFrame
     players: pl.DataFrame
     round_economy: pl.DataFrame
+    shots: pl.DataFrame
 
     def load(self, *datasets: str) -> None: ...
     def snapshots(self, *, ticks: Any = ...) -> pl.DataFrame: ...
@@ -120,10 +131,19 @@ def _round_players(demo: DemoLike, rounds: pl.DataFrame) -> pl.DataFrame:
     )
 
 
+def _grenade_throws(shots: pl.DataFrame, rounds: pl.DataFrame) -> pl.DataFrame:
+    throws = shots.filter(pl.col("weapon").is_in(list(THROW_TYPES))).select(
+        "tick", "steamid", "name",
+        pl.col("side").map_elements(norm_side, return_dtype=pl.Utf8),
+        pl.col("weapon").replace_strict(THROW_TYPES, return_dtype=pl.Utf8).alias("grenade"),
+    )
+    return add_round_num(throws, rounds).filter(~pl.col("after_round_end"))
+
+
 def ingest_demo_object(demo: DemoLike, demo_id: str, out_dir: Path, source: str) -> dict[str, Any]:
     """Pull every table we need out of a parsed demo and write the cache."""
     t0 = time.perf_counter()
-    demo.load("rounds", "kills", "damages", "blinds", "bomb", "stats", "players", "round_economy")
+    demo.load("rounds", "kills", "damages", "blinds", "bomb", "stats", "players", "round_economy", "shots")
     rounds = demo.rounds.with_columns(pl.col("winner_side").map_elements(norm_side, return_dtype=pl.Utf8))
 
     tables: dict[str, pl.DataFrame] = {
@@ -138,6 +158,7 @@ def ingest_demo_object(demo: DemoLike, demo_id: str, out_dir: Path, source: str)
             pl.col("side").map_elements(norm_side, return_dtype=pl.Utf8)
         ),
         "round_players": _round_players(demo, rounds),
+        "grenade_throws": _grenade_throws(demo.shots, rounds),
     }
     for col_side in ("attacker_side", "victim_side", "assister_side"):
         for name in ("kills", "damages", "blinds"):
@@ -206,15 +227,26 @@ class DemoStore:
 
         # awpy only checks the header when opening; a truncated file (an interrupted download)
         # passes that and fails later, while the tables are decoded. Catch both stages.
+        #
+        # awpy memory-maps the file, and Windows won't let anyone delete a mapped file. So on
+        # failure we must not keep the Demo alive: raising `from e` would keep the original
+        # exception, its traceback, its frames and through them `demo`, locking the file for as
+        # long as the process runs (in Claude Desktop, until it restarts).
+        demo, error = None, None
         try:
             demo = Demo(p)
             meta = ingest_demo_object(demo, demo_id, out, source=str(p))
         except InvalidDemoError as e:
+            error = str(e)
+        finally:
+            demo = None
+        if error is not None:
+            gc.collect()  # unmap now rather than whenever the collector gets to it
             size_mb = p.stat().st_size / 1e6
             raise AnalystError(
-                f"'{p.name}' ({size_mb:.1f} MB) couldn't be parsed: {e}. If it was just downloaded, the download "
+                f"'{p.name}' ({size_mb:.1f} MB) couldn't be parsed: {error}. If it was just downloaded, the download "
                 "is probably incomplete or corrupted: delete it and download it again. CS:GO demos are not supported."
-            ) from e
+            )
         self._load.cache_clear()
         return {**meta, "cached": False}
 

@@ -4,7 +4,7 @@ An AI analyst for Counter-Strike 2 match demos. Ask it why you lost, who won the
 
 Two parts:
 
-1. **An MCP server** (phase 1) that turns a `.dem` file into 10 tools any MCP client can use, including Claude Desktop.
+1. **An MCP server** (phase 1) that turns a `.dem` file into 12 tools any MCP client can use, including Claude Desktop.
 2. **A verifying agent** (phase 2) that runs its own loop over those tools, states its answer as structured claims with evidence, and has each claim checked: facts deterministically against the tool results, interpretations by a separate judge model.
 
 ```
@@ -27,7 +27,7 @@ cs2-agent (CLI)                      Claude Desktop
       |                                    |
   agent/loop.py  model <-> tools           |
   agent/verifier.py  fact checks           |
-  agent/judge.py  interpretation checks    |
+  agent/judge.py  conclusions + critique   |
       |   MCP client (in-process)          |  MCP (stdio)
       v                                    v
   server.py      protocol layer: thin tool wrappers, error translation
@@ -44,7 +44,8 @@ The agent reaches the tools through MCP, as a client of its own server, so it us
 
 ```
 question ─> model ─tool_use─> run tool via MCP ─[call_id=t3] result─> model ─> ...
-              └─submit_report─> verifier ─all good─> judge ─> report
+              └─submit_report─> verifier ─all good─> judge ─all good─> report
+                                   │                   └─issues─> critique sent back, agent resubmits
                                    └─failures─> actual values sent back, agent resubmits
 ```
 
@@ -53,7 +54,7 @@ The agent can't just answer in prose. It calls `submit_report` with a summary pl
 - **Facts** carry checks: a tool call id, a path to one value in that result, and the claimed value. Example: `{"call_id": "t2", "path": "duels[round=4].traded", "expected": "true"}`. The verifier resolves the path in the recorded result and compares. No model is involved, so this step can't hallucinate.
 - **Interpretations** ("you lose rounds because you peek without utility") list the facts they rest on. They count as supported only if every cited fact verified and a judge model (Haiku 5.5 by default) agrees the facts actually back the conclusion.
 
-Failed facts go back to the agent with the real values, so it can fix or drop them (one revision by default). Whatever still fails is shown separately as "did not hold up", never mixed into the answer.
+Failed facts go back to the agent with the real values, so it can fix or drop them (one revision by default). Then the judge reviews the report, and anything it finds (summary text that contradicts a claim or isn't backed by one, conclusions the facts don't support) goes back once more as a critique. Whatever still fails is shown separately as "did not hold up", never mixed into the answer.
 
 ## Design decisions
 
@@ -75,6 +76,16 @@ Failed facts go back to the agent with the real values, so it can fix or drop th
 
 **Rank players by rating, not kills.** The scoreboard includes a rating using the public approximation of HLTV Rating 2.0 (KAST, kills, deaths and assists per round, ADR), the same formula awpy used to ship. HLTV's current Rating 3.0 is built around round swing, how each action changed the team's chance to win the round, and its formula isn't published. Phase 4's win probability model is the route to a swing-based rating. The linear formula goes negative in a stomp, so the displayed rating is floored at 0.00 while ranking uses the raw value.
 
+**Counts come from tools, never from the model.** The Falcons eval showed every submitted fact was right while half the summaries had a hand-counted mistake ("magixx killed you 4 times" when its own claims listed 5 rounds). So tools return the totals and breakdowns: `find_kills` counts all matching kills by attacker, victim, side and round (not just the page it returns), with tags for openings, trades and kills in rounds the killer's team won; `get_clutches` and `get_round_list` return per-player, per-half and per-buy-type totals.
+
+**Grenades from fire events.** awpy's grenade and smoke tables leave the thrower empty on many demos. Every throw is also a `weapon_fire` event with the player on it, so `grenade_throws` is built from those. Flash counts match the scoreboard exactly for every player on the test demos. Throws are split by side and by before/after the bomb plant: T side before the plant is execute utility, CT side after it is the retake.
+
+**Clutches the way players count them.** Each round is replayed from the freeze-end roster, removing players as they die, to find every moment someone is last alive with enemies up (both sides can be: a 1v3 that turns into a 1v1). awpy's scoreboard calls all of these clutches, and with post-round kills included our raw count matches it for all ten players. But that's not how players count: a 1v5 on an eco isn't a lost clutch. After labelling the Falcons eval, the rules became: any last-alive round the team **wins** is a clutch won (if he died and the bomb won it, it's flagged `won_after_death`); any lost 1v1 is a clutch lost; a lost 1v2/1v3 is a clutch lost only if he **attempted** it (got a kill, did damage, planted the bomb as T, or died near the planted bomb going for the defuse as CT); a lost 1v4/1v5 is a clutch lost only with a kill or a plant (damage alone isn't enough at those odds); surviving a lost round is a **save**; anything else is just **last alive**. Two rounds from the Falcons maps set these lines: TeSeS's eco 1v3 with no attempt (last alive) and m0NESY's 1v4 with 2 kills and a plant (a real attempt). There's no start-defuse event in the demo, so "went for the defuse" is a distance check against the plant position. On the 30-round FACEIT demo, the scoreboard's 36 "clutches" become 20. The scoreboard's clutch columns are replaced with the same rules, so tools never disagree. The replay also found one scoreboard "1v1" that only existed because of a kill after the round was over.
+
+**Costly team flashes.** A team flash only counts as a mistake when the blinded teammate died before the blind wore off (plus 0.5s). Most team flashes cost nothing, often because the teammate walked into it.
+
+**Overtime halves.** Teams keep their sides going into overtime, so halves split on side swaps and also at the start of each overtime period.
+
 **Minor blinds aren't team flashes.** Most self-blinds in real demos are under a second (catching the edge of your own flash while turned away). Team and self flashes count only blinds of 1.5s or more; shorter ones are reported separately.
 
 ### Phase 2: agent
@@ -89,7 +100,13 @@ Failed facts go back to the agent with the real values, so it can fix or drop th
 
 **The summary can't sneak in specifics.** The judge also reviews the summary and flags any statement (a ranking, a name, a number) that no verified claim backs. This came from a real run where the summary said a player was "second on his team" without any claim behind it.
 
-**Guardrails.** Max model turns (12), a total token budget, one revision pass, and no tool runs after the final-step message.
+**The judge's findings go back to the agent.** Flagging unbacked text only tells the user; sending it back lets the agent fix it. After the verifier passes, the judge's review (contradictions, unbacked statements, rejected conclusions) is returned once as a critique, and the agent can call more tools before resubmitting. The judge's first review is kept, so the eval measures what the critique fixed. `--critic-revisions 0` turns it off.
+
+**Contradicted is worse than unbacked.** "Unbacked" means unchecked, "contradicted" means wrong. Judge prompt v3 reports them separately, and the eval tracks contradictions as their own metric.
+
+**Lists are checkable too.** A path can point at a list of plain values (`rounds`), and a claim like "3, 4, 6" passes only if it names exactly those values, in any order.
+
+**Guardrails.** Max model turns (12), a total token budget, one revision pass for failed facts and one for the critique, and no tool runs after the final-step message.
 
 **Prompt caching on the whole loop.** Every step re-sends the system prompt, tools and history. A top-level `cache_control` marker caches that prefix, so each step pays full price only for what's new.
 
@@ -115,6 +132,8 @@ What gets measured, and the question each metric answers:
 | First drafts with a wrong fact | How often the agent's first answer had a wrong fact, i.e. what you'd see with **no verifier**. The gap to "final answers with a wrong fact" is what verification buys. |
 | Interpretations supported / rejected | How many conclusions survive the judge, and whether they fail on evidence (verifier) or on reasoning (judge) |
 | Unbacked summary text | How often the answer slips in specifics that no claim backs |
+| Summary contradicts a claim | How often the answer states something its own verified claims show is wrong |
+| Before the critic | The same two numbers on the judge's first review, i.e. what you'd see with **no critique pass** |
 | Judge agrees with expert | How often the judge's verdict matches a human player's, and whether it errs lenient or strict |
 | Cost, latency, tool calls, cache hits | What a question costs to answer |
 
@@ -122,11 +141,25 @@ What gets measured, and the question each metric answers:
 
 **Judge agreement needs a baseline.** Labels are lopsided (in the first set, 13 of 16 conclusions were fair), so a judge that rubber-stamps everything would score 81%. The report shows that trivial score next to the real one; a judge has to beat it.
 
-**Comparing judges fairly.** `eval rejudge <run>` keeps a run's answers, resets only the judge's verdicts and asks the judge again, so two judge prompts rule on exactly the same labelled items. Judge prompts are versioned (`--judge-prompt v1|v2`); v2 was written after the first labels showed v1 rejecting fair reads 7 times out of 8 disagreements. Because v2 was shaped by those labels, its score on them is optimistic; new labels from new demos are the real test.
+**Comparing judges fairly.** `eval rejudge <run>` keeps a run's answers, resets only the judge's verdicts and asks the judge again, so two judge prompts rule on exactly the same labelled items. Judge prompts are versioned (`--judge-prompt v1|v2|v3`); v2 was written after the first labels showed v1 rejecting fair reads 7 times out of 8 disagreements, and v3 (the default) separates contradictions from unbacked text and stops flagging hedges. Because v2 was shaped by those labels, its score on them is optimistic; new labels from new demos are the real test.
 
 **Runs** are written to `evals/runs/<run>/`: `results.jsonl` (one line per case, appended as each finishes), a trace per case, and `report.md`. A run that's interrupted or hits API errors can be finished with `--resume <run>`, which only runs the missing cases. One failing case never stops the run.
 
+**Comparing runs with different question sets.** `eval compare` only uses the cases both runs answered, so adding questions doesn't skew a comparison (`--all` includes everything).
+
 **Changing something?** Run `eval run --tag <change>` and `eval compare` against the baseline. Prompt tweaks, models (`--model claude-haiku-5-5`), step limits and the judge (`--no-judge`) are all flags.
+
+### Results so far
+
+| Run | What changed | Facts verified | Interpretations supported | Summary flagged | Cost / question |
+| --- | --- | --- | --- | --- | --- |
+| baseline | first eval (FACEIT + pro demo, 18 cases) | 100% | 41% | 67% | $0.028 |
+| prompt-v2 | summary written from claims, proportionate conclusions, judge v2 | 100% | 87% | 22% | $0.033 |
+| haiku | same, Haiku 5.5 as the agent | 100% | 63% | 50% | $0.003 |
+| falcons | 3 Spirit vs Falcons maps, 18 cases | 100% | 87% | 56% | $0.035 |
+| falcons-v3 | counting tools, critique pass, judge v3, 4 new questions (30 cases) | 100% | 100% | 3% (47% before the critique) | $0.054 |
+
+The Falcons run is why the counting tools and the critique pass exist: on 30-round pro matches, the agent grouped and counted long lists in its head, and those numbers never became checkable claims. Every claim was right; the summaries weren't. In falcons-v3 the verifier caught its first wrong facts (3 drafts misread the new utility paths, all fixed before the final answer) and the judge caught 2 summaries contradicting their own claims. The judge that reviews the critique also grades the result, so the low final number is being re-checked with a different judge model.
 
 ## Tools
 
@@ -137,8 +170,10 @@ What gets measured, and the question each metric answers:
 | `get_match_overview` | Score per team with CT/T split, scoreboard ranked by rating (HLTV 2.0 approximation) |
 | `get_round_summary` | One round: buys, every player's loadout, kill feed with timings, bomb events |
 | `get_opening_duels` | A player's first-kill duels by side, round conversion, trades, positions |
-| `get_utility_stats` | Flashes, enemy vs team vs self blinds (minor blinds under 1.5s separated), worst team flashes, nade damage |
-| `find_kills` | Filterable, paginated kill feed (e.g. a player's untraded deaths) |
+| `get_round_list` | The whole match round by round: winner, first kill, plant, each team's buy, running score; halves (overtime too), rounds won per buy type, first-kill conversion |
+| `get_utility_stats` | Grenades thrown by type, side and before/after the plant, compared with teammates; flashes: enemy vs team vs self blinds (minor blinds under 1.5s separated), costly team flashes; nade damage |
+| `get_clutches` | Clutches counted the way players do (won at any odds; lost only when attempted), with saves and hopeless last-alive rounds listed apart; totals per situation and per player |
+| `find_kills` | Filterable, paginated kill feed with counts over all matches: by attacker, victim, side and round, plus opening/trade/round-won tags |
 | `get_faceit_profile` | FACEIT level, ELO, lifetime stats, Steam64 ID |
 | `get_recent_faceit_matches` | Recent FACEIT matches with result, K/D, ADR |
 | `get_leetify_profile` | Leetify ratings, ranks and key skill stats |
@@ -183,12 +218,12 @@ Your own matchmaking demos are under `.../Counter-Strike Global Offensive/game/c
 
 ## Tests
 
-`uv run pytest` runs 104 tests with no network or API key:
+`uv run pytest` runs 148 tests with no network or API key:
 
 - a hand-scripted 2v2 match that goes through the real ingest pipeline
 - mocked HTTP for the FACEIT and Leetify clients
 - an in-memory MCP session for the server
-- the agent loop driven by a scripted fake model: revisions, the plain-text nudge, the step limit, refused tool calls after the final step, cost accounting and trace files
+- the agent loop driven by a scripted fake model: revisions, the critique pass, the plain-text nudge, the step limit, refused tool calls after the final step, cost accounting and trace files
 - the eval runner, metrics, resume, labelling and reports, with a scripted model that gets a fact wrong and fixes it after feedback
 
 For a check against a real match with a known result:
@@ -197,7 +232,7 @@ For a check against a real match with a known result:
 CS2_TEST_DEMO=/path/to/faceit-de_mirage-6de46e85.dem uv run pytest -m demo
 ```
 
-That demo is public in [awpy-fixtures](https://github.com/pnxenopoulos/awpy-fixtures). The tests check the 16-14 score, FACEIT's published kills and deaths, that the opening-duel logic agrees with awpy's independent scoreboard for all 10 players, and that agent evidence paths resolve against real tool output.
+That demo is public in [awpy-fixtures](https://github.com/pnxenopoulos/awpy-fixtures). The tests check the 16-14 score, FACEIT's published kills and deaths, that the opening-duel, clutch and grenade logic agree with awpy's independent scoreboard for all 10 players, the overtime halves, and that agent evidence paths resolve against real tool output.
 
 ## Roadmap
 

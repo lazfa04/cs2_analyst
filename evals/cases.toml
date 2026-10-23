@@ -1,5 +1,6 @@
-# The eval set: every question runs against every demo, so 4 demos x 6 questions = 24 cases.
-# Keep this file stable between runs; results are only comparable on the same set.
+# The eval set: every question runs against every demo (demos x questions = cases).
+# Keep it stable between runs. `eval compare` only compares the cases both runs answered, so adding
+# questions doesn't break comparisons with older runs.
 #
 # `file` is a full path or a name inside CS2_DEMO_DIR. `player` fills {player} in the questions.
 
@@ -22,12 +23,21 @@ name = "vitality-b8-mirage"
 file = "hltv-de_mirage-2394170.dem"
 player = "ZywOo"
 
-# Falcons: download a recent match from HLTV (GOTV demo), extract the .rar with 7-Zip,
-# then fill in the map's file name and a Falcons player's in-game name and uncomment.
-# [[demo]]
-# name = "falcons-map1"
-# file = "falcons-vs-xxx-m1-mirage.dem"
-# player = "m0NESY"
+# Falcons: Spirit vs Falcons, all three maps
+[[demo]]
+name = "falcons-map1"
+file = "spirit-vs-falcons-m1-anubis.dem"
+player = "m0NESY"
+
+[[demo]]
+name = "falcons-map2"
+file = "spirit-vs-falcons-m2-mirage.dem"
+player = "NiKo"
+
+[[demo]]
+name = "falcons-map3"
+file = "spirit-vs-falcons-m3-dust2.dem"
+player = "TeSeS"
 
 # ---------------------------------------------------------------- questions
 
@@ -54,3 +64,20 @@ text = "How did {player} do in opening duels, and did the team convert them into
 [[question]]
 id = "best"
 text = "Who was the best player on each team, and why?"
+
+# Added after the Falcons eval: questions that need counting, which is where answers went wrong.
+[[question]]
+id = "killers"
+text = "Who killed {player} most often, and did {player} die more on CT or T side?"
+
+[[question]]
+id = "clutches"
+text = "How did {player} do in clutches? Go through each one."
+
+[[question]]
+id = "support"
+text = "Did {player} do a support job with utility? Compare their grenades with their teammates'."
+
+[[question]]
+id = "flow"
+text = "How did the match go half by half, and did economy decide it?"
