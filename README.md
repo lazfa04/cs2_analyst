@@ -159,7 +159,10 @@ What gets measured, and the question each metric answers:
 | falcons | 3 Spirit vs Falcons maps, 18 cases | 100% | 87% | 56% | $0.035 |
 | falcons-v3 | counting tools, critique pass, judge v3, 4 new questions (30 cases) | 100% | 100% | 3% (47% before the critique) | $0.054 |
 
-The Falcons run is why the counting tools and the critique pass exist: on 30-round pro matches, the agent grouped and counted long lists in its head, and those numbers never became checkable claims. Every claim was right; the summaries weren't. In falcons-v3 the verifier caught its first wrong facts (3 drafts misread the new utility paths, all fixed before the final answer) and the judge caught 2 summaries contradicting their own claims. The judge that reviews the critique also grades the result, so the low final number is being re-checked with a different judge model.
+The Falcons run is why the counting tools and the critique pass exist: on 30-round pro matches, the agent grouped and counted long lists in its head, and those numbers never became checkable claims. Every claim was right; the summaries weren't. In falcons-v3 the verifier caught its first wrong facts (3 drafts misread the new utility paths, all fixed before the final answer) and the judge caught 2 summaries contradicting their own claims. Two checks on that 3%, because the judge that writes the critique also grades the result:
+
+- **What actually moved the number.** Re-judging the old Falcons answers with judge v3 drops them from 56% to 33% flagged, and the new answers' first drafts were flagged 39% of the time under the same judge. So the agent's first drafts weren't cleaner: the switch to judge v3 explains the first drop, and the critique pass explains the rest (39% to 3%). What did change in the drafts is the kind of mistake. Hand-counted totals are gone: every count now comes from a tool.
+- **An independent read.** All 30 final answers were reviewed by hand against their own claims and against each other: 2 unbacked statements (both mild), 0 contradictions, and every cross-answer total consistent (untraded deaths are a subset of all deaths per killer, side splits add up, buy-type wins add up to the final score). The Haiku judge also flags statements that are backed word for word, so its flags are a signal, not ground truth.
 
 ## Tools
 
