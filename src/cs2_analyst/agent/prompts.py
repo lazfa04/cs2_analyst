@@ -154,6 +154,28 @@ Reject when:
 
 JUDGE_SYSTEM_V3 = JUDGE_SYSTEM_V2.removesuffix(_SUMMARY_CHECK) + _SUMMARY_CHECK_V3
 
-JUDGE_PROMPTS = {"v1": JUDGE_SYSTEM_V1, "v2": JUDGE_SYSTEM_V2, "v3": JUDGE_SYSTEM_V3}
-DEFAULT_JUDGE_PROMPT = "v3"
+# v4 (after the red team): the hard tier showed the v2/v3 opening-duel rule backfiring. "That count is
+# the evidence itself, not a small sample" made the judge REJECT "too few duels to show a pattern", the
+# exact read the rule was written to accept. v4 rewrites that rule around the conclusion, not the count,
+# and adds the two expert calls the judge kept getting wrong: converted opening wins, and rating-only
+# verdicts that ignore high-impact rounds. Tuned on those red-team items, so judge it on fresh labels.
+_OLD_OPENING_RULE = """- The number of opening duels a player takes over a whole match reflects their role. A full match with
+  0-2 opening duels means entrying wasn't their job; many duels means it was. That count is the evidence
+  itself, not a small sample.
+"""
+_V4_CONTEXT = """- Opening duels and role: a full match with 0-2 opening duels means entrying wasn't the player's job. Saying
+  their duels were "too few to show a pattern" or that their impact came from other fights is a fair read.
+  Many duels means entrying was their job.
+- Opening-duel conversion: when a player's opening wins turned into round wins (e.g. 4 of 4), calling those
+  wins a reliable source of advantage is fair; the match's conversion is the evidence.
+- Rating, KAST and ADR weigh every kill and round the same, so they underrate high-impact rounds. If the facts
+  show clutch wins or opening wins that turned into rounds, a verdict that the player had a below-average or
+  poor game based on rating, KAST or ADR alone is not fair.
+- Which team a named player is on is general context; don't reject a conclusion for naming it.
+"""
+assert _OLD_OPENING_RULE in JUDGE_SYSTEM_V3
+JUDGE_SYSTEM_V4 = JUDGE_SYSTEM_V3.replace(_OLD_OPENING_RULE, _V4_CONTEXT)
+
+JUDGE_PROMPTS = {"v1": JUDGE_SYSTEM_V1, "v2": JUDGE_SYSTEM_V2, "v3": JUDGE_SYSTEM_V3, "v4": JUDGE_SYSTEM_V4}
+DEFAULT_JUDGE_PROMPT = "v4"
 JUDGE_SYSTEM = JUDGE_PROMPTS[DEFAULT_JUDGE_PROMPT]

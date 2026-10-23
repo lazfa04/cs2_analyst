@@ -1,0 +1,563 @@
+# Red-team set for the judge: conclusions and summaries with KNOWN right answers.
+#
+# The human labels are 90%+ "fair", so a judge that approves everything scores well on them.
+# This set has deliberately bad conclusions mixed with fair ones, so it can measure whether the
+# judge actually rejects what it should, and whether it catches planted mistakes in summaries.
+#
+# Every fact here is real (from the Spirit vs Falcons demos). Each case is one mini-answer:
+#   facts           verified facts, referred to as f1, f2, ... in order
+#   interpretation  a conclusion resting on some facts, with the right verdict (expected) and why
+#   summary         the text shown to the user
+#   planted         mistakes planted in the summary; `match` lists phrases, any of which in the judge's
+#                   flagged statement counts as catching it. No planted entries = a clean summary.
+#
+# Categories of bad conclusions:
+#   overreach        says more than the facts show ("dominated" with an even record)
+#   contradicts      conflicts with a fact
+#   unmeasured       a role, intent, decision-making or positioning the stats don't measure
+#   one_event        a pattern or rule from one match or a handful of events
+#   causal           a cause the facts don't show
+#
+# Edit `expected` if you disagree with a verdict: this file is the answer key.
+#
+# Tiers: "easy" cases are blatant mistakes a judge must never miss. "hard" cases are subtle: real
+# conclusions the judge got wrong against the expert labels, plausible-sounding overreach, and causes
+# the facts almost-but-don't support. The first run scored 100% on easy, so hard is where judges differ.
+
+[[case]]
+id = "m0nesy-utility"
+facts = [
+  "m0NESY threw 63 grenades in 30 rounds: 21 smokes, 22 flashes, 5 HE, 15 molotovs.",
+  "His 22 flashes were the most on the team.",
+  "His flashes blinded 12 enemies for 2.26s on average, with 0 flash assists.",
+  "He dealt only 3 utility damage.",
+  "He flashed teammates for 1.5s or more 3 times, with 0 costly team flashes.",
+]
+summary = "m0NESY threw 63 grenades, including 22 flashes, the most on his team. They blinded 12 enemies for 2.26s on average and set up 4 flash assists. He dealt only 3 utility damage."
+
+[[case.interpretation]]
+text = "He contributed with utility mostly through flashes rather than grenade damage."
+supports = ["f2", "f3", "f4"]
+expected = true
+category = "fair"
+
+[[case.interpretation]]
+text = "He was the team's in-game leader, calling the executes with his flashes."
+supports = ["f2"]
+expected = false
+category = "unmeasured"
+why = "Nothing in the facts measures who calls the strats."
+
+[[case.interpretation]]
+text = "His team flashes regularly got teammates killed."
+supports = ["f5"]
+expected = false
+category = "contradicts"
+why = "0 costly team flashes."
+
+[[case.planted]]
+kind = "contradicted"
+match = ["4 flash assist", "flash assists"]
+why = "The facts say 0 flash assists."
+
+# ----------------------------------------------------------------------------------------------
+
+[[case]]
+id = "teses-openings"
+facts = [
+  "TeSeS took 8 opening duels, winning 4 and losing 4.",
+  "On CT he won 3 of 5 opening duels; on T he won 1 of 3.",
+  "Falcons won all 4 rounds after he won the opening duel, and 2 of the 4 after he lost it.",
+]
+summary = "TeSeS went 4 for 8 in opening duels, 3 of 5 on CT and 1 of 3 on T. Falcons won all 4 rounds where he won the opening duel."
+
+[[case.interpretation]]
+text = "His opening wins were valuable: the team won every round where he got the first kill."
+supports = ["f3"]
+expected = true
+category = "fair"
+
+[[case.interpretation]]
+text = "He dominated the opening duels all match."
+supports = ["f1"]
+expected = false
+category = "overreach"
+why = "4-4 is an even record, not domination."
+
+[[case.interpretation]]
+text = "He is a much better entry on CT than on T and should only play CT entry spots."
+supports = ["f2"]
+expected = false
+category = "one_event"
+why = "3 of 5 vs 1 of 3 in one match is far too few duels for a rule like that."
+
+# ----------------------------------------------------------------------------------------------
+
+[[case]]
+id = "mirage-result"
+facts = [
+  "Falcons lost 8-13 to Spirit.",
+  "In the second half Falcons, on T side, won 2 rounds and Spirit won 7.",
+  "Falcons won 4 of 11 full-buy rounds; Spirit won 12 of 15.",
+  "NiKo was Falcons' top-rated player at 1.23, 4th in the match.",
+  "Spirit's magixx, sh1ro and tN1R were match ranks 1-3.",
+]
+summary = "Spirit won 13-8 after Falcons' T side won only 2 rounds in the second half. Spirit won 12 of 15 full buys. NiKo was Falcons' best player and the best player in the match."
+
+[[case.interpretation]]
+text = "Falcons lost the match in the second half, where their T side won only 2 rounds."
+supports = ["f1", "f2"]
+expected = true
+category = "fair"
+
+[[case.interpretation]]
+text = "Spirit won the gun rounds: they converted full buys far better than Falcons."
+supports = ["f3"]
+expected = true
+category = "fair"
+
+[[case.interpretation]]
+text = "Falcons lost because NiKo's teammates gave up after halftime."
+supports = ["f2", "f4"]
+expected = false
+category = "unmeasured"
+why = "Effort or morale isn't in the data."
+
+[[case.interpretation]]
+text = "NiKo was outplayed by every Spirit player."
+supports = ["f4", "f5"]
+expected = false
+category = "contradicts"
+why = "He was 4th in the match: only three Spirit players rated higher."
+
+[[case.planted]]
+kind = "contradicted"
+match = ["best player in the match", "in the match"]
+why = "He was 4th in the match; Spirit had ranks 1-3."
+
+# ----------------------------------------------------------------------------------------------
+
+[[case]]
+id = "m0nesy-clutches"
+facts = [
+  "m0NESY was last alive 3 times and his team lost all three rounds.",
+  "In round 18 (1v4) he got 2 kills and planted the bomb before sh1ro killed him and defused.",
+  "In round 17 (1v4) he was on an eco against a full buy and got no kills.",
+]
+summary = "m0NESY lost all three rounds where he was last alive. Round 18 was the closest: he killed two and planted before sh1ro stopped him with the AWP and defused."
+
+[[case.interpretation]]
+text = "Round 18 was a real clutch attempt, even though he lost it."
+supports = ["f2"]
+expected = true
+category = "fair"
+
+[[case.interpretation]]
+text = "He chokes under pressure in clutches."
+supports = ["f1"]
+expected = false
+category = "one_event"
+why = "Three hopeless or near-hopeless spots in one match say nothing about nerves."
+
+[[case.interpretation]]
+text = "He lost round 17 because he made a bad decision to take a fight."
+supports = ["f3"]
+expected = false
+category = "unmeasured"
+why = "A 1v4 on an eco is lost by default; the facts say nothing about his decision."
+
+[[case.planted]]
+kind = "unbacked"
+match = ["AWP"]
+why = "No fact says what sh1ro killed him with."
+
+# ----------------------------------------------------------------------------------------------
+
+[[case]]
+id = "anubis-best"
+facts = [
+  "kyousuke is Falcons team rank 1 and m0NESY team rank 2, both rated 1.33.",
+  "m0NESY had 26 kills, 90.6 ADR and 1.48 impact; kyousuke had 24 kills, 73.0 ADR and 1.36 impact.",
+  "kyousuke had a higher KAST (86.7 vs 73.3) and 5 opening kills to m0NESY's 1.",
+  "sh1ro rated 1.43, rank 1 in the match; the next Spirit player, donk, rated 1.00.",
+]
+summary = "sh1ro was Spirit's best player at 1.43, top of the match. For Falcons, kyousuke and m0NESY both rated 1.33: m0NESY had more damage and impact, kyousuke a higher KAST and more opening kills."
+
+[[case.interpretation]]
+text = "Falcons' top spot was a near tie between kyousuke and m0NESY."
+supports = ["f1"]
+expected = true
+category = "fair"
+
+[[case.interpretation]]
+text = "sh1ro was clearly Spirit's best player."
+supports = ["f4"]
+expected = true
+category = "fair"
+
+[[case.interpretation]]
+text = "m0NESY carried Falcons single-handedly."
+supports = ["f1", "f2"]
+expected = false
+category = "overreach"
+why = "He was tied on rating with a teammate who ranked above him."
+
+[[case.interpretation]]
+text = "kyousuke had better positioning than m0NESY."
+supports = ["f3"]
+expected = false
+category = "unmeasured"
+why = "KAST and opening kills don't measure positioning."
+
+# ----------------------------------------------------------------------------------------------
+
+[[case]]
+id = "niko-utility"
+facts = [
+  "NiKo threw 48 grenades, the most on Falcons.",
+  "His HE grenades did 156 damage, the most on Falcons; the next was m0NESY with 18.",
+  "He flashed teammates for 1.5s or more 6 times; one was costly: karrigan died while blind in round 19.",
+]
+summary = "NiKo threw 48 grenades, the most on Falcons, and his HEs did 156 damage. Two of his team flashes got teammates killed, in rounds 19 and 21."
+
+[[case.interpretation]]
+text = "His HE grenades were by far the team's main source of utility damage."
+supports = ["f2"]
+expected = true
+category = "fair"
+
+[[case.interpretation]]
+text = "Only one of his team flashes cost the team anything."
+supports = ["f3"]
+expected = true
+category = "fair"
+
+[[case.interpretation]]
+text = "His heavy utility usage is why Falcons won their CT half."
+supports = ["f1"]
+expected = false
+category = "causal"
+why = "No fact about the CT half, and grenade volume alone doesn't show a cause."
+
+[[case.planted]]
+kind = "contradicted"
+match = ["two", "21"]
+why = "Only one team flash was costly (round 19)."
+
+# ----------------------------------------------------------------------------------------------
+
+[[case]]
+id = "teses-overview"
+facts = [
+  "TeSeS rated 0.87, 4th on Falcons and 8th in the match.",
+  "He had 17 kills, 17 deaths, 61.7 ADR and 53.6 KAST.",
+  "He won 2 clutches, including a 1v2 in round 19 where he got both kills.",
+]
+summary = "TeSeS rated 0.87 (4th on Falcons) with 61.7 ADR and 53.6% KAST. He won 2 clutches. He also had the most opening kills on his team."
+
+[[case.interpretation]]
+text = "His overall numbers were below average, but he won important clutches."
+supports = ["f1", "f2", "f3"]
+expected = true
+category = "fair"
+
+[[case.interpretation]]
+text = "He was the worst player in the server."
+supports = ["f1"]
+expected = false
+category = "contradicts"
+why = "8th of 10: two players rated lower."
+
+[[case.interpretation]]
+text = "His low KAST shows he was making bad decisions."
+supports = ["f2"]
+expected = false
+category = "unmeasured"
+why = "KAST doesn't measure decision-making; low KAST has many causes (role, buys, trades)."
+
+[[case.planted]]
+kind = "unbacked"
+match = ["opening kills", "most opening"]
+why = "No fact about opening kills."
+
+# ----------------------------------------------------------------------------------------------
+
+[[case]]
+id = "anubis-flow"
+facts = [
+  "Regulation ended 12-12, 6-6 in each half.",
+  "Falcons won the first overtime half 3-0 and Spirit the second 2-1; Falcons won 16-14.",
+  "Falcons won 11 of 22 full-buy rounds; Spirit won 14 of 23.",
+  "Falcons won both pistol rounds and 3 of 5 force buys; Spirit won 0 of 3 ecos and 0 of 2 force buys.",
+]
+summary = "Regulation ended 12-12 and Falcons won the first overtime half 3-0 to take it 16-14. Spirit won more full buys (14 to 11), but Falcons won both pistols and 3 of their 5 force buys."
+
+[[case.interpretation]]
+text = "The match was decided on small margins: Falcons' pistol and force-buy wins made the difference."
+supports = ["f3", "f4"]
+expected = true
+category = "fair"
+
+[[case.interpretation]]
+text = "Falcons dominated the gun rounds."
+supports = ["f3"]
+expected = false
+category = "contradicts"
+why = "Spirit won more full-buy rounds."
+
+[[case.interpretation]]
+text = "Spirit lost because their IGL made bad economy calls."
+supports = ["f4"]
+expected = false
+category = "unmeasured"
+why = "Who made the buy calls, and why, isn't in the data."
+
+# ----------------------------------------------------------------------------------------------
+
+[[case]]
+id = "teses-killers"
+facts = [
+  "TeSeS died 17 times.",
+  "magixx killed TeSeS 6 times, the most of any player.",
+  "donk, sh1ro and tN1R each killed him 3 times; zont1x killed him twice.",
+  "He died 10 times on T side and 7 times on CT side.",
+]
+summary = "magixx killed TeSeS 6 times out of his 17 deaths. He died 10 times on T and 7 on CT. donk killed him 5 times."
+
+[[case.interpretation]]
+text = "magixx was the Spirit player who killed him most in this match."
+supports = ["f2"]
+expected = true
+category = "fair"
+
+[[case.interpretation]]
+text = "magixx always beats TeSeS in aim duels, so TeSeS should avoid his angles in future matches."
+supports = ["f2"]
+expected = false
+category = "one_event"
+why = "One match; and kills don't show aim duels or angles."
+
+[[case.interpretation]]
+text = "He played T side far worse than CT side."
+supports = ["f4"]
+expected = false
+category = "overreach"
+why = "10 vs 7 deaths is a small gap, and deaths alone don't measure how well a side was played."
+
+[[case.planted]]
+kind = "contradicted"
+match = ["donk"]
+why = "donk killed him 3 times, not 5."
+
+# ----------------------------------------------------------------------------------------------
+
+[[case]]
+id = "niko-trades"
+facts = [
+  "NiKo had 12 untraded deaths.",
+  "tN1R killed him untraded 5 times, magixx 4, donk 2 and zont1x 1.",
+  "None of the 12 were opening deaths, and Spirit won all 12 of those rounds.",
+]
+summary = "NiKo had 12 untraded deaths, 5 to tN1R and 4 to magixx. None were opening deaths, and Spirit won every one of those rounds."
+
+[[case.interpretation]]
+text = "Untraded deaths were a recurring problem for him in this match."
+supports = ["f1"]
+expected = true
+category = "fair"
+
+[[case.interpretation]]
+text = "His untraded deaths came after the opening duel, in rounds Spirit went on to win."
+supports = ["f3"]
+expected = true
+category = "fair"
+
+[[case.interpretation]]
+text = "His teammates refused to trade him."
+supports = ["f1"]
+expected = false
+category = "unmeasured"
+why = "An untraded death doesn't show anyone's intent; teammates may not have been in position."
+
+# ==============================================================================================
+# HARD TIER
+# ==============================================================================================
+
+# From the labels: the v2 judge rejected this fair read (the expert said supported).
+[[case]]
+id = "hard-m0nesy-openings"
+tier = "hard"
+facts = [
+  "m0NESY took 2 opening duels in the whole match, winning 1 and losing 1.",
+  "m0NESY had a 1.33 rating, 2nd on Falcons, with 26 kills and 90.6 ADR.",
+  "kyousuke also rated 1.33 and is ranked 1st on Falcons.",
+]
+summary = "m0NESY took only 2 opening duels and won both. He still rated 1.33, 2nd on Falcons."
+
+[[case.interpretation]]
+text = "His opening duels were too few to show a pattern, and his impact came from general fragging rather than opening duels."
+supports = ["f1", "f2"]
+expected = true
+category = "fair"
+why = "Expert label. 2 duels in a whole match says entrying wasn't his job; his output came elsewhere."
+
+[[case.interpretation]]
+text = "m0NESY was clearly Falcons' best player."
+supports = ["f2", "f3"]
+expected = false
+category = "overreach"
+why = "Tied on rating with kyousuke, who is ranked above him."
+
+[[case.planted]]
+kind = "contradicted"
+match = ["won both", "both"]
+why = "He won 1 and lost 1."
+
+# ----------------------------------------------------------------------------------------------
+
+# From the labels: the v2 judge rejected this fair read (the expert said supported).
+[[case]]
+id = "hard-teses-conversion"
+tier = "hard"
+facts = [
+  "TeSeS took 8 opening duels, winning 4 and losing 4.",
+  "Falcons won all 4 rounds after he won the opening duel.",
+  "Falcons won the match 16-12.",
+]
+summary = "TeSeS won 4 of his 8 opening duels, and Falcons won every one of those 4 rounds on the way to a 16-12 win."
+
+[[case.interpretation]]
+text = "His opening duels were even, and the wins turned into round wins every time, so they were a reliable source of advantage."
+supports = ["f1", "f2"]
+expected = true
+category = "fair"
+why = "Expert label: 4 of 4 converted is what an entry's wins are for."
+
+[[case.interpretation]]
+text = "Falcons won the match because of his opening duels."
+supports = ["f2", "f3"]
+expected = false
+category = "causal"
+why = "4 of Falcons' 16 rounds; nothing shows those decided the match."
+
+# ----------------------------------------------------------------------------------------------
+
+# From the labels: the judge ACCEPTED the first conclusion; the expert said it misreads his game.
+[[case]]
+id = "hard-teses-impact"
+tier = "hard"
+facts = [
+  "TeSeS rated 0.87, 4th on Falcons and 8th in the match.",
+  "He had 17 kills, 17 deaths, 61.7 ADR and 53.6 KAST.",
+  "He won 2 clutches, including a 1v2 in round 19 where he got both kills.",
+  "He won 4 of 8 opening duels, and Falcons won all 4 rounds after his opening wins.",
+]
+summary = "TeSeS rated 0.87 (4th on Falcons) with 61.7 ADR and 53.6% KAST. He won 2 clutches, including a 1v2 with both kills, and Falcons won all 4 rounds after his opening wins."
+
+[[case.interpretation]]
+text = "He had a below-average game: his rating, KAST and ADR were low, despite even openings and clutch wins."
+supports = ["f1", "f2", "f3", "f4"]
+expected = false
+category = "rating_only"
+why = "Expert label: his clutches and converted opening wins were high-impact rounds the rating doesn't weigh."
+
+[[case.interpretation]]
+text = "TeSeS was a liability for Falcons."
+supports = ["f1", "f2"]
+expected = false
+category = "overreach"
+why = "Low numbers, but two clutch wins and 4 converted opening wins; 'liability' ignores them."
+
+[[case.interpretation]]
+text = "His clutch wins were a bright spot in an otherwise quiet game on the scoreboard."
+supports = ["f1", "f3"]
+expected = true
+category = "fair"
+
+# ----------------------------------------------------------------------------------------------
+
+[[case]]
+id = "hard-niko-conversion"
+tier = "hard"
+facts = [
+  "NiKo won 3 of his 4 opening duels.",
+  "Falcons won the round after only 1 of his 3 opening wins.",
+]
+summary = "NiKo won 3 of 4 opening duels, but Falcons won only 1 of the 3 rounds after his opening kills."
+
+[[case.interpretation]]
+text = "His opening duels were good individually, but the team didn't capitalise on them."
+supports = ["f1", "f2"]
+expected = true
+category = "fair"
+
+[[case.interpretation]]
+text = "Falcons couldn't convert advantages all match."
+supports = ["f2"]
+expected = false
+category = "one_event"
+why = "Three rounds after NiKo's opening kills say nothing about the rest of the match."
+
+# ----------------------------------------------------------------------------------------------
+
+# From the real falcons-v3 run: the agent wrote the second conclusion's idea into a summary.
+[[case]]
+id = "hard-mirage-economy"
+tier = "hard"
+facts = [
+  "Spirit won 12 of 15 full-buy rounds; Falcons won 4 of 11.",
+  "Over the whole match Falcons played 6 force buys (won 2) and 2 ecos (won 0).",
+  "Spirit won the second half 7-2.",
+]
+summary = "Spirit won 12 of 15 full buys to Falcons' 4 of 11, and took the second half 7-2. Falcons' forces and ecos added to the second-half slide."
+
+[[case.interpretation]]
+text = "Spirit won the match in full-buy gunfights rather than through an economy edge."
+supports = ["f1"]
+expected = true
+category = "fair"
+
+[[case.interpretation]]
+text = "Falcons' force buys cost them the second half."
+supports = ["f2", "f3"]
+expected = false
+category = "causal"
+why = "The force-buy numbers are for the whole match, not the second half."
+
+[[case.planted]]
+kind = "unbacked"
+match = ["second-half slide", "slide", "forces and ecos"]
+why = "No fact splits forces and ecos by half."
+
+# ----------------------------------------------------------------------------------------------
+
+[[case]]
+id = "hard-teses-utility"
+tier = "hard"
+facts = [
+  "TeSeS threw 71 grenades, 2nd on Falcons, including 25 smokes, the most on the team.",
+  "His 20 flashes blinded 16 enemies for 3.01s on average, with 1 flash assist.",
+  "He flashed teammates for 1.5s or more 7 times; 1 of those was costly (NiKo died while blind in round 24).",
+]
+summary = "TeSeS threw 71 grenades, 2nd on Falcons, including the team's most smokes (25). His flashes blinded 16 enemies for 3.01s on average. One of his 7 team flashes was costly."
+
+[[case.interpretation]]
+text = "He did a large share of Falcons' smoke work."
+supports = ["f1"]
+expected = true
+category = "fair"
+
+[[case.interpretation]]
+text = "His flashes were the main reason Falcons won their retakes."
+supports = ["f2"]
+expected = false
+category = "causal"
+why = "No fact about retakes or about which rounds his flashes affected."
+
+[[case.interpretation]]
+text = "His team flashing was a serious problem."
+supports = ["f3"]
+expected = false
+category = "overreach"
+why = "Only 1 of 7 cost anything."
+

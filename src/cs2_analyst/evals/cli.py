@@ -23,6 +23,8 @@ from .metrics import compute, load_results
 from .report import markdown, render, render_compare
 from .runner import RunConfig, run_eval
 
+REDTEAM = Path("evals/redteam.toml")
+
 CASES = Path("evals/cases.toml")
 RUNS = Path("evals/runs")
 LABELS = Path("evals/labels.jsonl")
@@ -64,6 +66,15 @@ def add_parser(sub: argparse._SubParsersAction) -> None:
     rj.add_argument("--judge-model", default="claude-haiku-5-5")
     rj.add_argument("--tag", help="Name for the new run (default: rejudge-<prompt>).")
     rj.add_argument("--yes", "-y", action="store_true")
+
+    rt = esub.add_parser("redteam", help="Score the judge on conclusions with known right answers (cheap: no agent).")
+    rt.add_argument("--file", type=Path, default=None, help="Red-team cases (default: evals/redteam.toml).")
+    rt.add_argument("--judge-prompt", choices=sorted(JUDGE_PROMPTS), default=DEFAULT_JUDGE_PROMPT)
+    rt.add_argument("--judge-model", default="claude-haiku-5-5")
+    rt.add_argument("--tag", help="Name for this run (default: redteam-<prompt>).")
+    rt.add_argument("--repeats", type=int, default=1,
+                    help="Run the whole set N times to measure how much verdicts move between identical runs.")
+    rt.add_argument("--yes", "-y", action="store_true")
 
     lab = esub.add_parser("label", help="Label interpretations so judge agreement can be measured.")
     lab.add_argument("run", nargs="?", default="latest")
@@ -184,6 +195,87 @@ def cmd_rejudge(args: argparse.Namespace, console: Console) -> None:
     (dst / "report.md").write_text(markdown(dst.name, compute(load_results(dst), labels)), encoding="utf-8")
 
 
+def cmd_redteam(args: argparse.Namespace, console: Console) -> None:
+    import json
+
+    from rich.table import Table
+
+    from .redteam import RedTeamError, load_redteam, misses, run_redteam, score, stability
+
+    try:
+        cases = load_redteam(args.file or REDTEAM)
+    except RedTeamError as e:
+        sys.exit(str(e))
+    if not os.getenv("ANTHROPIC_API_KEY"):
+        sys.exit("ANTHROPIC_API_KEY is not set. Add it to your .env file (see .env.example).")
+    n_interp = sum(len(c.interpretations) for c in cases)
+    per_call = 0.0007 if "haiku" in args.judge_model else 0.007  # per case, measured on real runs
+    dst = RUNS / (time.strftime("%Y%m%d-%H%M%S") + "-" + (args.tag or f"redteam-{args.judge_prompt}"))
+    console.print(f"{len(cases)} red-team cases ({n_interp} conclusions), judge {args.judge_model} prompt "
+                  f"{args.judge_prompt}, one judge call per case, {args.repeats}x, "
+                  f"estimated cost ~${len(cases) * per_call * args.repeats:.2f}.")
+    if not args.yes and Prompt.ask("Start?", choices=["y", "n"], default="n") != "y":
+        sys.exit("Cancelled.")
+
+    from ..agent.llm import AnthropicLLM
+
+    llm = AnthropicLLM()
+    runs = [asyncio.run(run_redteam(cases, llm, args.judge_model, args.judge_prompt))
+            for _ in range(max(1, args.repeats))]
+    results = [r for rep in runs for r in rep]  # pooled: rates below are averages over the repeats
+    m = score(results)
+    stab = stability(runs) if len(runs) > 1 else None
+    dst.mkdir(parents=True, exist_ok=True)
+    with (dst / "redteam.jsonl").open("w", encoding="utf-8") as f:
+        for k, rep in enumerate(runs):
+            for r in rep:
+                f.write(json.dumps({**r, "repeat": k}, default=str) + "\n")
+    (dst / "redteam_metrics.json").write_text(json.dumps({**m, "stability": stab}, indent=2), encoding="utf-8")
+
+    c, sm = m["conclusions"], m["summaries"]
+    t = Table(title=f"Red team · {dst.name}", title_justify="left")
+    t.add_column("Metric")
+    t.add_column("Value", justify="right")
+    rows = [
+        (f"Bad conclusions rejected (of {c['bad']}) %", c["bad_rejected_pct"]),
+        (f"Fair conclusions accepted (of {c['fair']}) %", c["fair_accepted_pct"]),
+        ("Balanced accuracy % (50 = always yes or always no)", c["balanced_accuracy_pct"]),
+        *[(f"  {tier} cases", v) for tier, v in c["balanced_accuracy_by_tier_pct"].items()],
+        *[(f"  rejected: {cat}", f"{v['rejected']}/{v['total']}") for cat, v in c["bad_rejected_by_category"].items()],
+        (f"Planted summary mistakes caught (of {sm['planted']}) %", sm["planted_caught_pct"]),
+        ("  contradictions caught %", sm["contradictions_caught_pct"]),
+        ("  contradictions filed as contradictions %", sm["contradictions_filed_correctly_pct"]),
+        ("  unbacked statements caught %", sm["unbacked_caught_pct"]),
+        (f"Clean summaries falsely flagged (of {sm['clean']}) %", sm["clean_summaries_flagged_pct"]),
+        ("Cost ($)", m["total_cost_usd"]),
+    ]
+    if stab:
+        rows += [
+            (f"Balanced accuracy per repeat ({stab['repeats']} runs)",
+             " / ".join(str(b) for b in stab["balanced_accuracy_each_pct"])),
+            ("  spread between repeats (points)", stab["balanced_accuracy_spread_pct"]),
+            (f"  conclusions whose verdict changed (of {stab['conclusions']})", stab["unstable_conclusions"]),
+        ]
+    for label, v in rows:
+        t.add_row(label, "–" if v is None else str(v))
+    console.print(t)
+    if stab:
+        if stab["wrong_counts"]:
+            console.print(f"[bold]Conclusions the judge got wrong (times wrong out of {stab['repeats']}):[/]")
+            for item, n in sorted(stab["wrong_counts"].items(), key=lambda kv: -kv[1]):
+                console.print(f"  [yellow]{n}/{stab['repeats']}[/] {escape(item)}")
+        sm_wrong = [line for line in misses(results) if "planted" in line or "false alarm" in line]
+        for line in sorted(set(sm_wrong)):
+            console.print(f"  [yellow]•[/] {escape(line)}")
+    else:
+        wrong = misses(results)
+        if wrong:
+            console.print("[bold]What the judge got wrong:[/]")
+            for line in wrong:
+                console.print(f"  [yellow]•[/] {escape(line)}")
+    console.print(f"[dim]results: {dst / 'redteam.jsonl'}[/]")
+
+
 def run(args: argparse.Namespace) -> None:
     console = Console()
     if args.eval_command == "run":
@@ -207,3 +299,5 @@ def run(args: argparse.Namespace) -> None:
         cmd_rejudge(args, console)
     elif args.eval_command == "label":
         cmd_label(args, console)
+    elif args.eval_command == "redteam":
+        cmd_redteam(args, console)

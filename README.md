@@ -122,6 +122,7 @@ uv run cs2-agent eval report                    # metrics of the latest run
 uv run cs2-agent eval label                     # label the judge's verdicts (blind)
 uv run cs2-agent eval compare baseline latest   # what changed between two runs
 uv run cs2-agent eval rejudge baseline          # same answers, re-judged by the current judge
+uv run cs2-agent eval redteam                   # judge only, on conclusions with known right answers
 ```
 
 What gets measured, and the question each metric answers:
@@ -141,7 +142,22 @@ What gets measured, and the question each metric answers:
 
 **Judge agreement needs a baseline.** Labels are lopsided (in the first set, 13 of 16 conclusions were fair), so a judge that rubber-stamps everything would score 81%. The report shows that trivial score next to the real one; a judge has to beat it.
 
-**Comparing judges fairly.** `eval rejudge <run>` keeps a run's answers, resets only the judge's verdicts and asks the judge again, so two judge prompts rule on exactly the same labelled items. Judge prompts are versioned (`--judge-prompt v1|v2|v3`); v2 was written after the first labels showed v1 rejecting fair reads 7 times out of 8 disagreements, and v3 (the default) separates contradictions from unbacked text and stops flagging hedges. Because v2 was shaped by those labels, its score on them is optimistic; new labels from new demos are the real test.
+**Red-teaming the judge.** Real answers are mostly fair (20 of 21 labelled "supported" in the latest run), so an approve-everything judge matches the labels too, and agreement alone can't show the judge rejects anything. `evals/redteam.toml` is an answer key built from real Falcons facts and reviewed by the expert: 46 conclusions, 26 of them deliberately bad (overreach, contradicting a fact, a role or intent the stats don't measure, a pattern from one match, an invented cause, judging a player by rating alone), plus mistakes planted in summaries and clean summaries to catch false alarms. It has two tiers. The easy tier is blatant mistakes; Haiku with judge v3 scored 100% on it, with one false alarm that turned out to be a real flaw in the answer key (the summary named the team, the fact didn't). The hard tier is subtle: the three real conclusions the judge got wrong against the expert labels, plus plausible-sounding overreach and causes the facts almost support.
+
+Each prompt run 3 times on the same set (`--repeats 3`):
+
+| Judge (Haiku 5.5) | Balanced accuracy (3 runs) | Spread | Easy | Hard | Planted mistakes caught | Clean summaries flagged |
+| --- | --- | --- | --- | --- | --- | --- |
+| v3 | 92.2% (93.1 / 93.1 / 90.6) | 2.5 pts | 98.8% | 77.1% | 24/24 | 0/24 |
+| v4 | **99.4%** (100 / 100 / 98.1) | 1.9 pts | 100% | 97.9% | 24/24 | 0/24 |
+
+Both judges caught every subtle trap and every planted summary mistake. v3 missed the same three items every time: the three real disagreements with the expert, so the red team reproduces the production failures. One of them was a prompt bug. Judge v2 added the rule "a match with 0-2 opening duels shows entrying wasn't their job; that count is the evidence itself, not a small sample". When the agent wrote that m0NESY's duels were "too few to show a pattern", the judge cited that rule as its reason to *reject* the conclusion the rule was written to accept. Judge v4 rewrites the rule around the conclusion instead of the count, and adds the expert's other two calls (converted opening wins are a fair basis; a "below average" verdict from rating alone is unfair when the facts show clutch wins or converted openings).
+
+**A single run was misleading.** The first single run of v4 also scored 93.1%, with two fair conclusions newly rejected, which read as v4 only moving errors around. Run 3 more times, those two rejections never came back, and v4 beat v3 by 7 points against a run-to-run spread of about 2. So `--repeats N` now reports the spread between identical runs and how many verdicts flipped: a prompt change smaller than that spread hasn't been shown to do anything, and a single run can point either way.
+
+**The caveat that remains:** v4's gain is entirely on the three items it was written from. On every other item v3 and v4 are both near-perfect, so this shows v4 fixed its targets without breaking anything else, not that it generalises. Fresh expert labels from the next full eval are the real test. `cs2-agent eval redteam` runs only the judge over it (about a cent with Haiku) and reports bad conclusions rejected, fair ones accepted, **balanced accuracy** (the mean of the two, so always-yes and always-no both score 50), planted mistakes caught, whether contradictions were filed as contradictions, and false alarms on clean summaries, then lists every miss.
+
+**Comparing judges fairly.** `eval rejudge <run>` keeps a run's answers, resets only the judge's verdicts and asks the judge again, so two judge prompts rule on exactly the same labelled items. Judge prompts are versioned (`--judge-prompt v1|v2|v3|v4`); v2 was written after the first labels showed v1 rejecting fair reads 7 times out of 8 disagreements, v3 separates contradictions from unbacked text and stops flagging hedges, and v4 (the default) fixes a rule the red team showed backfiring. Because v2 was shaped by those labels, its score on them is optimistic; new labels from new demos are the real test.
 
 **Runs** are written to `evals/runs/<run>/`: `results.jsonl` (one line per case, appended as each finishes), a trace per case, and `report.md`. A run that's interrupted or hits API errors can be finished with `--resume <run>`, which only runs the missing cases. One failing case never stops the run.
 
@@ -221,7 +237,7 @@ Your own matchmaking demos are under `.../Counter-Strike Global Offensive/game/c
 
 ## Tests
 
-`uv run pytest` runs 148 tests with no network or API key:
+`uv run pytest` runs 162 tests with no network or API key:
 
 - a hand-scripted 2v2 match that goes through the real ingest pipeline
 - mocked HTTP for the FACEIT and Leetify clients
