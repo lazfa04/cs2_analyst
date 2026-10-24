@@ -73,6 +73,9 @@ def cmd_train(args: argparse.Namespace, console: Console) -> None:
                               f"{' (cached)' if meta.get('cached') else ''}[/]")
             except AnalystError as e:
                 console.print(f"[yellow]skipped {f.name}: {escape(str(e))}[/]")
+    refreshed = store.refresh_stale(lambda n: console.print(f"[dim]re-parsing {n} (newer cache format)...[/]"))
+    if refreshed:
+        console.print(f"[dim]refreshed {len(refreshed)} demos[/]")
     states = all_states(store, console)
     with console.status("Training (leave-one-demo-out)..."):
         try:

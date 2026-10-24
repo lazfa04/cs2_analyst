@@ -26,8 +26,8 @@ from .errors import AnalystError, DemoNotFound
 from .sides import norm_side
 
 # Bump when the cached table layout changes; older caches get re-ingested.
-# v2: added grenade_throws.
-SCHEMA_VERSION = 2
+# v2: added grenade_throws. v3: coaches and spectators (dead at freeze end) left out of round_players.
+SCHEMA_VERSION = 3
 
 TABLES = ("rounds", "kills", "damages", "blinds", "bomb", "stats", "players", "round_economy", "round_players",
           "grenade_throws")
@@ -43,7 +43,7 @@ THROW_TYPES = {
 SNAPSHOT_COLS = [
     "steamid", "name", "side", "money", "equipment_value", "primary_weapon",
     "secondary_weapon", "armor", "has_helmet", "has_defuser", "has_bomb",
-    "flashbangs", "smoke_grenades", "he_grenades", "fire_grenades",
+    "flashbangs", "smoke_grenades", "he_grenades", "fire_grenades", "health",
 ]
 
 
@@ -126,9 +126,11 @@ def _round_players(demo: DemoLike, rounds: pl.DataFrame) -> pl.DataFrame:
     keep = [c for c in SNAPSHOT_COLS if c in snaps.columns]
     snaps = snaps.select(["tick", *keep])
     out = snaps.join(freeze_ticks, left_on="tick", right_on="freeze_end_tick", how="inner").drop("tick")
-    return out.with_columns(pl.col("side").map_elements(norm_side, return_dtype=pl.Utf8)).filter(
-        pl.col("steamid") != 0
-    )
+    out = out.with_columns(pl.col("side").map_elements(norm_side, return_dtype=pl.Utf8)).filter(pl.col("steamid") != 0)
+    # Coaches sit on a team's side in the demo but are never alive. Everyone playing has health at freeze end.
+    if "health" in out.columns:
+        out = out.filter(pl.col("health") > 0).drop("health")
+    return out
 
 
 def _grenade_throws(shots: pl.DataFrame, rounds: pl.DataFrame) -> pl.DataFrame:
@@ -249,6 +251,19 @@ class DemoStore:
             )
         self._load.cache_clear()
         return {**meta, "cached": False}
+
+    def refresh_stale(self, on_progress=lambda name: None) -> list[str]:
+        """Re-parse cached demos written by an older SCHEMA_VERSION, when their .dem is still around.
+        Returns the demo_ids refreshed."""
+        done = []
+        for meta_file in sorted(self.cache_dir.glob("*/meta.json")):
+            m = json.loads(meta_file.read_text())
+            source = Path(m.get("source") or "")
+            if m.get("schema_version") != SCHEMA_VERSION and source.is_file():
+                on_progress(source.name)
+                self.ingest(source, force=True)
+                done.append(m["demo_id"])
+        return done
 
     def list_demos(self) -> list[dict[str, Any]]:
         out = []

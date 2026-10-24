@@ -130,8 +130,11 @@ class FakeDemo:
                     "tick": tick, "steamid": sid, "name": name,
                     "side": 3 if _side(sid, rnd) == CT else 2,  # team numbers, like the engine
                     "money": 800, "equipment_value": 1000, "primary_weapon": None, "secondary_weapon": "glock",
-                    "armor": 100, "has_helmet": False, "has_defuser": False, "has_bomb": False,
+                    "armor": 100, "has_helmet": False, "has_defuser": False, "has_bomb": False, "health": 100,
                 })
+            # a coach: listed on team A's side every round but never alive
+            rows.append({"tick": tick, "steamid": 99, "name": "coach", "side": 3 if rnd <= 2 else 2, "health": 0,
+                         "money": 0, "equipment_value": 0})
         rows.append({"tick": ticks[0], "steamid": 0, "name": "DemoRecorder", "side": None})  # GOTV bot
         return pl.DataFrame(rows, schema_overrides={"steamid": pl.UInt64})
 

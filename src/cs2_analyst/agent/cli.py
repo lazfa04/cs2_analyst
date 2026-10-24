@@ -142,6 +142,21 @@ def to_json(result: AgentResult) -> dict:
     }
 
 
+def run_web(args: argparse.Namespace) -> None:
+    import threading
+    import webbrowser
+
+    import uvicorn
+
+    from ..web.app import create_app
+
+    url = f"http://{args.host}:{args.port}"
+    if not args.no_open:
+        threading.Timer(1.5, lambda: webbrowser.open(url)).start()
+    print(f"cs2-analyst web app on {url} (Ctrl+C to stop)")
+    uvicorn.run(create_app(), host=args.host, port=args.port, log_level="warning")
+
+
 def main(argv: list[str] | None = None) -> None:
     p = argparse.ArgumentParser(prog="cs2-agent", description="Ask questions about a CS2 demo, or run the evals.")
     sub = p.add_subparsers(dest="command", required=True)
@@ -164,7 +179,14 @@ def main(argv: list[str] | None = None) -> None:
 
     eval_cli.add_parser(sub)
     model_cli.add_parser(sub)
+    w = sub.add_parser("web", help="Open the web app: scoreboard, swing, win probability, 2D replay (free).")
+    w.add_argument("--port", type=int, default=8000)
+    w.add_argument("--host", default="127.0.0.1")
+    w.add_argument("--no-open", action="store_true", help="Don't open the browser.")
     args = p.parse_args(argv)
+    if args.command == "web":
+        run_web(args)
+        return
     if args.command == "eval":
         eval_cli.run(args)
         return

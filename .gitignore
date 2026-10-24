@@ -17,3 +17,7 @@ traces/
 
 # eval runs (results, traces, reports); evals/labels.jsonl IS committed
 evals/runs/
+
+# web app
+web/node_modules/
+web/dist/

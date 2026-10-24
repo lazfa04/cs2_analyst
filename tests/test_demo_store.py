@@ -109,3 +109,9 @@ def test_failed_parse_releases_the_demo_file(tmp_path: Path):
     assert err.value.__cause__ is None and err.value.__context__ is None, "no chained traceback keeping frames alive"
     gc.collect()
     assert opened and opened[0]() is None, "the Demo (and its memory map) must be released"
+
+
+def test_coaches_are_not_players(tables):
+    rp = tables("round_players")
+    assert "coach" not in rp["name"].to_list(), "dead at freeze end every round: a coach, not a player"
+    assert rp.group_by("round_num").len()["len"].to_list() == [4, 4, 4, 4]

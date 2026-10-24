@@ -116,19 +116,19 @@ Failed facts go back to the agent with the real values, so it can fix or drop th
 
 Rating weighs every kill the same, so it misses what the expert labels kept pointing at: TeSeS rated 0.87 on Dust2 but won two clutches and converted every opening win, and the judge kept accepting "below average" for him. Round swing (the idea behind HLTV's Rating 3.0, whose formula isn't public) measures how much each play changed the team's chance to win the round. That needs a win probability model.
 
-**Game states.** Each round becomes a sequence of states: freeze end, then after every kill, the plant and the defuse. Features are what a caster sees on the HUD: players alive, their total health, the freeze-end buy of the players still alive, CT defuse kits, bomb down or not, round clock or bomb timer. The label is whether T won. 5 public demos give 103 rounds and 727 states; `cs2-agent model train --ingest` adds every demo in your folder.
+**Game states.** Each round becomes a sequence of states: freeze end, then after every kill, the plant and the defuse. Features are what a caster sees on the HUD: players alive, their total health, the freeze-end buy of the players still alive, CT defuse kits, bomb down or not, round clock or bomb timer. The label is whether T won. 5 public demos give 103 rounds and 718 states; `cs2-agent model train --ingest` adds every demo in your folder. (Building the replay exposed that one demo listed a team's coach as a sixth player; coaches are dead at every freeze end, so they're now left out of the rosters, which also improved every model below.)
 
 **Evaluated leave-one-demo-out.** States from the same round are near-duplicates, so a random split would leak; every score is on a match the model never saw, against two baselines:
 
 | Model (5 demos, 103 rounds) | Log loss | Brier | AUC |
 | --- | --- | --- | --- |
-| Always the T win rate | 0.724 | 0.265 | – |
-| Players alive only (logistic) | 0.537 | 0.185 | 0.780 |
-| Logistic, all features, signs constrained | 0.477 | 0.158 | 0.847 |
-| XGBoost, monotone constraints | 0.488 | 0.163 | 0.837 |
-| **Shipped: average of the two** | **0.474** | **0.157** | **0.846** |
+| Always the T win rate | 0.726 | 0.266 | – |
+| Players alive only (logistic) | 0.513 | 0.174 | 0.804 |
+| Logistic, all features, signs constrained | 0.474 | 0.157 | 0.849 |
+| XGBoost, monotone constraints | 0.495 | 0.165 | 0.833 |
+| **Shipped: average of the two** | **0.475** | **0.158** | **0.846** |
 
-Calibration (the thing swing depends on, since swings are differences between probabilities) is within a few points in every bucket: when it says 90%, T won 92%.
+Calibration (the thing swing depends on, since swings are differences between probabilities) is within a few points in most buckets: when it says 90%, T won 93%.
 
 **Decisions the data forced:**
 - **Monotone constraints.** With a few hundred rounds a tree model can learn that a sixth CT alive helps T. Every feature has a fixed direction (more Ts alive never lowers T's chance), enforced in XGBoost and as coefficient bounds in the logistic model. The plain logistic model had learned "more round time left hurts T", the time-pressure effect reversed by confounding; the constrained one scores better.
@@ -137,6 +137,20 @@ Calibration (the thing swing depends on, since swings are differences between pr
 - **Explanations without an extra dependency.** XGBoost's built-in TreeSHAP and the linear model's exact contributions, averaged, give the reasons behind each estimate ("CT health pushes CT, bomb planted pushes T").
 
 **Swing credit.** For a kill, the killer's team gains what the victim's team loses: the killer gets the gain (75% with an assist, the assister 25%), the victim gets the loss. The planter gets the plant's swing, the defuser everything that was left. The starting probability (the economy) and the last jump when a round ends on time or the bomb aren't credited. A player's swing rating is their average per round, in percentage points. On the FACEIT demo, babaya0310 rates 1.02 (6th) but ranks 3rd on swing; oh-_- rates 1.18 (3rd) but is neutral on swing.
+
+### Phase 5: web app
+
+`cs2-agent web` opens a local web app over the same cache, analysis functions and model the agent uses (FastAPI backend, React + TypeScript frontend):
+
+- **Matches:** parse demos from your folder or upload one.
+- **Match page:** scoreboard with rating and swing side by side (rank by either), 3k/4k/aces, and a strip of rounds coloured by winner with buys, plants and multi-kills.
+- **Round page:** a **2D replay** on the map's radar (players with view direction and health, smokes, molotovs, the bomb, deaths and kill tracers; play, pause, 0.5x to 4x, scrub), synced with the **win probability chart**: every kill is a dot sized by its swing, click it to jump the replay there. The kill feed shows each kill's swing.
+- **Watch in CS2:** copies the demo into CS2's folder and gives the two console commands (`playdemo`, `demo_gototick`) that open the real 3D replay 5 seconds before any moment. A web page can't control the game, so it's copy and paste.
+
+Decisions:
+- **Positions aren't part of ingest.** The replay needs player positions 8 times a second, which only the web app uses. The first replay of a match reads the demo once more for them (~2 MB, cached), so parsing for the agent and the evals stays fast.
+- **Radar images and coordinates** come from awpy's map data; world coordinates are converted to radar pixels on the server, so the frontend just draws.
+- **Same functions, no second implementation.** Every API route is a thin call into `analysis.py` or the model, like the MCP server, so the app, the agent and the evals can't disagree.
 
 ## Evals
 
@@ -254,6 +268,15 @@ uv run cs2-agent model swing match.dem --round 19   # one round, step by step
 
 The model lives in the cache folder next to the parsed demos. Retrain whenever you add demos; the agent's `get_win_probability` and `get_swing_ratings` tools use it.
 
+### Web app
+
+```bash
+cd web && npm install && npm run build && cd ..   # once (and after pulling frontend changes); needs Node 18+
+uv run cs2-agent web                               # opens http://127.0.0.1:8000
+```
+
+For "Watch in CS2", the app looks for CS2 in the usual Steam folder; if yours is elsewhere, add `CS2_GAME_DIR=...\Counter-Strike Global Offensive\game\csgo` to `.env`. Frontend development: `uv run cs2-agent web --no-open` plus `npm run dev` in `web/` (hot reload on :5173, API proxied).
+
 ### Claude Desktop
 
 Add this to `claude_desktop_config.json` (Settings > Developer > Edit Config), with your own paths:
@@ -276,7 +299,7 @@ Your own matchmaking demos are under `.../Counter-Strike Global Offensive/game/c
 
 ## Tests
 
-`uv run pytest` runs 182 tests with no network or API key:
+`uv run pytest` runs 192 tests with no network or API key:
 
 - a hand-scripted 2v2 match that goes through the real ingest pipeline
 - mocked HTTP for the FACEIT and Leetify clients
@@ -299,6 +322,7 @@ That demo is public in [awpy-fixtures](https://github.com/pnxenopoulos/awpy-fixt
 - [x] Phase 3: eval runner, metrics with a no-verifier baseline, blind labelling and judge agreement
 - [ ] Phase 3b: labelled "key mistakes" per match, to measure whether the agent finds what matters
 - [x] Phase 4: explainable round win probability model (XGBoost + logistic ensemble, TreeSHAP) and round swing rating
-- [ ] Phase 5: web app
+- [x] Phase 5: web app with 2D replay, synced win probability, swing scoreboard and "Watch in CS2"
+- [ ] Phase 6: mistake finder (costly moments + positions: untraded spacing, dry peeks, unused utility), scored against expert labels
 
 Built on [awpy](https://github.com/pnxenopoulos/awpy), the [MCP Python SDK](https://github.com/modelcontextprotocol/python-sdk) and the [Anthropic API](https://platform.claude.com/docs).
