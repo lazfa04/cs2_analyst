@@ -33,18 +33,20 @@ class FaceitClient:
             transport=transport, service="FACEIT",
         )
 
-    def _player(self, nickname: str) -> dict[str, Any]:
+    def _player(self, nickname: str | None = None, steam64: str | None = None) -> dict[str, Any]:
+        """By nickname, or by Steam64 ID (how a demo knows its players)."""
+        params = {"nickname": nickname, "game": GAME} if nickname else {"game": GAME, "game_player_id": steam64}
         try:
-            return self._c.get("/players", {"nickname": nickname, "game": GAME})
+            return self._c.get("/players", params)
         except ApiError as e:
             if e.status == 404:
-                raise ApiError(
-                    f"FACEIT has no player '{nickname}'. Nicknames are case-sensitive; check the exact spelling.", 404
-                ) from e
+                msg = (f"FACEIT has no player '{nickname}'. Nicknames are case-sensitive; check the exact spelling."
+                       if nickname else f"No FACEIT account is linked to Steam ID {steam64}.")
+                raise ApiError(msg, 404) from e
             raise
 
-    def profile(self, nickname: str) -> dict[str, Any]:
-        p = self._player(nickname)
+    def profile(self, nickname: str | None = None, *, steam64: str | None = None) -> dict[str, Any]:
+        p = self._player(nickname, steam64)
         cs2 = (p.get("games") or {}).get(GAME) or {}
         life = (self._c.get(f"/players/{p['player_id']}/stats/{GAME}") or {}).get("lifetime", {})
         return {
@@ -76,8 +78,8 @@ class FaceitClient:
             a, b = b, a
         return f"{a}-{b}"
 
-    def recent_matches(self, nickname: str, limit: int = 10) -> dict[str, Any]:
-        p = self._player(nickname)
+    def recent_matches(self, nickname: str | None = None, limit: int = 10, *, steam64: str | None = None) -> dict[str, Any]:
+        p = self._player(nickname, steam64)
         data = self._c.get(f"/players/{p['player_id']}/games/{GAME}/stats", {"limit": max(1, min(limit, 30))})
         matches = []
         for item in data.get("items", []):
@@ -95,4 +97,11 @@ class FaceitClient:
                 "hs_pct": _num(s.get("Headshots %")),
             })
         wins = sum(m["result"] == "win" for m in matches)
-        return {"nickname": p.get("nickname"), "count": len(matches), "wins": wins, "matches": matches}
+
+        def avg(k: str) -> float | None:
+            vals = [m[k] for m in matches if isinstance(m[k], (int, float))]
+            return round(sum(vals) / len(vals), 2) if vals else None
+
+        return {"nickname": p.get("nickname"), "count": len(matches), "wins": wins,
+                "averages": {"kd": avg("kd"), "adr": avg("adr"), "hs_pct": avg("hs_pct"), "kills": avg("kills")},
+                "matches": matches}

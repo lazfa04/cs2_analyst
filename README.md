@@ -146,6 +146,7 @@ Calibration (the thing swing depends on, since swings are differences between pr
 - **Match page:** scoreboard with rating and swing side by side (rank by either), 3k/4k/aces, and a strip of rounds coloured by winner with buys, plants and multi-kills.
 - **Round page:** a **2D replay** on the map's radar (players with view direction and health, smokes, molotovs, the bomb, deaths and kill tracers; play, pause, 0.5x to 4x, scrub), synced with the **win probability chart**: every kill is a dot sized by its swing, click it to jump the replay there. The kill feed shows each kill's swing.
 - **Ask the analyst:** the same verifying agent as `cs2-agent ask`, on the match page or on a round (the round on screen is passed as context). Pick who "I" is and the model (Haiku about half a cent a question, Sonnet about 4 cents). Answers show which facts were checked, any that didn't hold up, which tools the agent used, and the cost; rounds mentioned in the answer link to their replay.
+- **Player panel:** pick a player once and the match page shows their FACEIT level, Elo, win rate and last-20 form, and Leetify's ratings, all looked up by the Steam ID in the demo (so it works for anyone in the match with an account). A table puts this match next to their usual: K/D, ADR and headshots against the last 20 FACEIT matches and lifetime, and opening duels, traded deaths and utility held at death against Leetify's averages (Leetify's own definitions, so labelled roughly comparable). Each service fails on its own and says why (no key, private profile, not on FACEIT); the same choice drives the coach cards and Ask.
 - **Watch in CS2:** copies the demo into CS2's folder and gives the two console commands (`playdemo`, `demo_gototick`) that open the real 3D replay 5 seconds before any moment. A web page can't control the game, so it's copy and paste.
 
 Decisions:
@@ -341,7 +342,7 @@ Your own matchmaking demos are under `.../Counter-Strike Global Offensive/game/c
 
 ## Tests
 
-`uv run pytest` runs 226 tests with no network or API key:
+`uv run pytest` runs 228 tests with no network or API key:
 
 - a hand-scripted 2v2 match that goes through the real ingest pipeline
 - mocked HTTP for the FACEIT and Leetify clients

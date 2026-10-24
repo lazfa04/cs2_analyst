@@ -2,6 +2,10 @@ import { useEffect, useMemo, useState } from "react";
 import { api, Overview, RoundList, SwingPlayer } from "./api";
 import AskPanel from "./AskPanel";
 import CoachCards from "./CoachCards";
+import PlayerPanel from "./PlayerPanel";
+
+const saved = { get: () => { try { return localStorage.getItem("cs2.player") ?? ""; } catch { return ""; } },
+                set: (v: string) => { try { localStorage.setItem("cs2.player", v); } catch { /* private mode */ } } };
 
 type SortKey = "rating" | "swing";
 
@@ -12,6 +16,7 @@ export default function Match({ id }: { id: string }) {
   const [swingMsg, setSwingMsg] = useState<string | null>(null);
   const [sort, setSort] = useState<SortKey>("rating");
   const [error, setError] = useState<string | null>(null);
+  const [player, setPlayer] = useState(saved.get());
 
   useEffect(() => {
     api.overview(id).then(setOv).catch((e) => setError(e.message));
@@ -82,9 +87,23 @@ export default function Match({ id }: { id: string }) {
         </table>
       ))}
 
-      <CoachCards id={id} players={ov.scoreboard.map((r) => r.name)} />
+      <div className="playerbar">
+        <h2>Player</h2>
+        <select value={ov.scoreboard.some((r) => r.name === player) ? player : ""}
+                onChange={(e) => { setPlayer(e.target.value); saved.set(e.target.value); }}>
+          <option value="">Pick a player…</option>
+          {teams.map((t) => (
+            <optgroup key={t.team} label={t.team}>
+              {t.rows.map((r) => <option key={r.name} value={r.name}>{r.name}</option>)}
+            </optgroup>
+          ))}
+        </select>
+        <span className="muted small">FACEIT, Leetify and the coach for one player. Your choice is remembered.</span>
+      </div>
+      {ov.scoreboard.some((r) => r.name === player) && <PlayerPanel id={id} player={player} />}
+      <CoachCards id={id} player={ov.scoreboard.some((r) => r.name === player) ? player : ""} />
 
-      <AskPanel id={id} players={ov.scoreboard.map((r) => r.name)} />
+      <AskPanel id={id} players={ov.scoreboard.map((r) => r.name)} player={player || undefined} />
 
       {rounds && (
         <>

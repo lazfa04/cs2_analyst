@@ -2,17 +2,8 @@ import { useEffect, useState } from "react";
 import { api, Coach } from "./api";
 import Cs2Modal from "./Cs2Modal";
 
-const store = {
-  get: (k: string) => { try { return localStorage.getItem(k); } catch { return null; } },
-  set: (k: string, v: string) => { try { localStorage.setItem(k, v); } catch { /* private mode */ } },
-};
-
 // A player's costliest flagged deaths, from measured facts. Free: no model call.
-export default function CoachCards({ id, players }: { id: string; players: string[] }) {
-  const [player, setPlayer] = useState(() => {
-    const saved = store.get("cs2.player");
-    return saved && players.includes(saved) ? saved : "";
-  });
+export default function CoachCards({ id, player }: { id: string; player: string }) {
   const [coach, setCoach] = useState<Coach | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -20,7 +11,6 @@ export default function CoachCards({ id, players }: { id: string; players: strin
 
   useEffect(() => {
     if (!player) return;
-    store.set("cs2.player", player);
     setBusy(true); setError(null); setCoach(null);
     api.coach(id, player).then(setCoach).catch((e) => setError(e.message)).finally(() => setBusy(false));
   }, [id, player]);
@@ -31,12 +21,8 @@ export default function CoachCards({ id, players }: { id: string; players: strin
     <section className="coach">
       <div className="coachhead">
         <h3>Coach: deaths worth a second look</h3>
-        <select value={player} onChange={(e) => setPlayer(e.target.value)}>
-          <option value="">Pick a player…</option>
-          {players.map((p) => <option key={p} value={p}>{p}</option>)}
-        </select>
       </div>
-      {!player && <p className="muted">Pick a player to see their costliest deaths, with what the demo measured and a question to ask yourself. Free, no AI call.</p>}
+      {!player && <p className="muted">Pick a player above to see their costliest deaths, with what the demo measured and a question to ask yourself. Free, no AI call.</p>}
       {busy && <p className="muted">Reviewing deaths… (the first time reads the demo for positions, ~5 seconds)</p>}
       {error && <div className="error">{error}</div>}
       {coach && (
@@ -44,7 +30,7 @@ export default function CoachCards({ id, players }: { id: string; players: strin
           <p className="muted">
             {coach.deaths} deaths reviewed · {coach.cards.length + coach.more_flagged} worth a look
             ({coach.by_whom.player} point at {player}, {coach.by_whom.teammates} at teammates) · sorted by {coach.sorted_by}
-            {profile && ` · on T, apart from the team before contact in ${profile.rounds_apart}/${profile.rounds} rounds${profile.lurker ? " (lurker)" : ""}`}
+            {profile && ` · on T, a round spent apart from the team (before the plant) in ${profile.rounds_apart}/${profile.rounds} rounds${profile.lurker ? " (lurker)" : ""}`}
           </p>
           <div className="coachgrid">
             {coach.cards.map((c) => (

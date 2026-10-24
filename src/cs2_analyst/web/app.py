@@ -39,9 +39,13 @@ class AskBody(BaseModel):
 
 
 def create_app(settings: Settings | None = None, store: DemoStore | None = None,
-               llm_factory=None) -> FastAPI:
+               llm_factory=None, faceit_factory=None, leetify_factory=None) -> FastAPI:
     settings = settings or get_settings()
     store = store or DemoStore(settings.cache_dir)
+    from ..clients import FaceitClient, LeetifyClient
+
+    faceit = faceit_factory or functools.cache(lambda: FaceitClient(settings.faceit_api_key, settings.http_cache_ttl_s))
+    leetify = leetify_factory or functools.cache(lambda: LeetifyClient(settings.leetify_api_key, settings.http_cache_ttl_s))
     app = FastAPI(title="cs2-analyst", version="0.1.0")
     # Old caches (e.g. with coaches counted as players) are re-parsed once, before anything reads them.
     store.refresh_stale(lambda n: print(f"re-parsing {n} (newer cache format)..."))
@@ -139,6 +143,13 @@ def create_app(settings: Settings | None = None, store: DemoStore | None = None,
         labels = analysis.team_labels(rp, table(demo_id, "players"))
         ratings = dict(analysis.with_rating(table(demo_id, "stats")).select("steamid", "rating").iter_rows())
         return sw.swing_ratings(swing_states(demo_id), rp, labels, ratings)
+
+    @app.get("/api/demos/{demo_id}/players/{player}/context")
+    def player_context(demo_id: str, player: str) -> dict[str, Any]:
+        """FACEIT and Leetify for a player in this demo (by Steam ID), next to their numbers in this match."""
+        from .. import profiles
+
+        return profiles.player_context(store, demo_id, player, faceit, leetify)
 
     @app.get("/api/demos/{demo_id}/coach")
     def coach_cards(demo_id: str, player: str) -> dict[str, Any]:

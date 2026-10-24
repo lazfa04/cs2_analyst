@@ -169,6 +169,40 @@ export interface Coach {
   spacing_profile: Record<string, { rounds: number; rounds_apart: number; share_apart: number; median_units: number; lurker: boolean }>;
 }
 
+export interface CompareRow {
+  stat: string;
+  this_match: number | null;
+  recent: number | null;
+  usual: number | null;
+  usual_source: string;
+  higher_is_better: boolean;
+}
+
+export interface PlayerContext {
+  player: string;
+  steam64: string;
+  this_match: { rating: number; kd: number; adr: number; hs_pct: number; opening_duels: string };
+  faceit: {
+    error?: string;
+    nickname?: string;
+    level?: number;
+    elo?: number;
+    country?: string;
+    lifetime?: { matches: number | null; win_rate_pct: number | null; avg_kd: number | null; adr: number | null; avg_hs_pct: number | null };
+    recent?: { count: number; wins: number; matches: { map: string; result: string; score: string; kills: number | null; deaths: number | null; adr: number | null }[] };
+  };
+  leetify: {
+    error?: string;
+    name?: string;
+    total_matches?: number;
+    winrate?: number;
+    ranks?: Record<string, unknown>;
+    rating?: Record<string, number | null>;
+  };
+  comparison: CompareRow[];
+  recent_count: number | null;
+}
+
 export interface Cs2Info {
   game_dir: string | null;
   prepared: boolean;
@@ -201,6 +235,7 @@ export const api = {
   cs2: (id: string, tick?: number) => req<Cs2Info>(`/api/demos/${id}/cs2${tick !== undefined ? `?tick=${tick}` : ""}`),
   ask: (id: string, body: { question: string; player?: string; round?: number; model: string }) =>
     req<Answer>(`/api/demos/${id}/ask`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) }),
+  context: (id: string, player: string) => req<PlayerContext>(`/api/demos/${id}/players/${encodeURIComponent(player)}/context`),
   coach: (id: string, player: string) => req<Coach>(`/api/demos/${id}/coach?player=${encodeURIComponent(player)}`),
   cs2Prepare: (id: string) => req<{ prepared: boolean; path: string }>(`/api/demos/${id}/cs2/prepare`, { method: "POST" }),
 };

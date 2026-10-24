@@ -170,3 +170,44 @@ def test_coach_cards_from_positions(client, store):
 def test_coach_cards_unknown_player(client):
     r = client.get(f"/api/demos/{DEMO_ID}/coach?player=nobody")
     assert r.status_code == 400
+
+
+class FakeFaceit:
+    def profile(self, nickname=None, *, steam64=None):
+        assert steam64 == "1", "demo players are looked up by Steam ID"
+        return {"nickname": "alpha_fc", "level": 10, "elo": 2091,
+                "lifetime": {"matches": 500, "avg_kd": 1.1, "adr": 80.0, "avg_hs_pct": 50}}
+
+    def recent_matches(self, nickname=None, limit=10, *, steam64=None):
+        return {"nickname": "alpha_fc", "count": 2, "wins": 1, "averages": {"kd": 1.2, "adr": 85.5, "hs_pct": 48.0},
+                "matches": [{"map": "de_dust2", "result": "win", "score": "13-9"},
+                            {"map": "de_mirage", "result": "loss", "score": "10-13"}]}
+
+
+class FakeLeetify:
+    def profile(self, steam64):
+        from cs2_analyst.errors import ApiError
+
+        raise ApiError(f"Leetify has no public profile for {steam64} (private or never signed up).", 404)
+
+
+def test_player_context_compares_the_match_with_faceit(store):
+    from cs2_analyst.errors import MissingApiKey
+
+    settings = Settings(cache_dir=store.cache_dir, demo_dir=None, faceit_api_key=None, leetify_api_key=None,
+                        http_cache_ttl_s=0)
+    c = TestClient(create_app(settings=settings, store=store, faceit_factory=FakeFaceit, leetify_factory=FakeLeetify))
+    body = c.get(f"/api/demos/{DEMO_ID}/players/alpha/context").json()
+    assert body["player"] == "alpha" and body["steam64"] == "1"
+    assert body["faceit"]["elo"] == 2091 and body["faceit"]["recent"]["count"] == 2
+    assert "private" in body["leetify"]["error"], "one service failing doesn't hide the other"
+    kd = next(r for r in body["comparison"] if r["stat"] == "K/D")
+    assert kd["this_match"] == body["this_match"]["kd"] and kd["recent"] == 1.2 and kd["usual"] == 1.1
+    traded = next(r for r in body["comparison"] if r["stat"] == "Deaths traded %")
+    assert traded["this_match"] is not None and traded["usual"] is None
+
+    def no_key():
+        raise MissingApiKey("FACEIT_API_KEY is not set")
+
+    c = TestClient(create_app(settings=settings, store=store, faceit_factory=no_key, leetify_factory=FakeLeetify))
+    assert "FACEIT_API_KEY" in c.get(f"/api/demos/{DEMO_ID}/players/alpha/context").json()["faceit"]["error"]

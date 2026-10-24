@@ -18,7 +18,7 @@ def no_sleep(monkeypatch):
 def faceit_handler(request: httpx.Request) -> httpx.Response:
     assert request.headers["Authorization"] == "Bearer k"
     path = request.url.path
-    if path.endswith("/players") and request.url.params["nickname"] == "ghost":
+    if path.endswith("/players") and request.url.params.get("nickname") == "ghost":
         return httpx.Response(404, json={"errors": []})
     if path.endswith("/players"):
         return httpx.Response(200, json={
@@ -131,3 +131,23 @@ def test_leetify_skips_practice_matches_and_flags_stale_faceit_rank():
     p = LeetifyClient("lk", transport=httpx.MockTransport(handler)).profile("76561198802039309")
     assert [m["id"] for m in p["recent_matches"]] == ["a", "c"]
     assert "out of date" in p["note"]
+
+
+def test_faceit_by_steam_id_and_recent_averages():
+    seen = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path.endswith("/players"):
+            seen.append(dict(request.url.params))
+            if request.url.params.get("game_player_id") == "76561198000000999":
+                return httpx.Response(404, json={"errors": []})
+        return faceit_handler(request)
+
+    c = faceit(handler)
+    p = c.profile(steam64=STEAM)
+    assert p["nickname"] == "Afzal" and seen[-1] == {"game": "cs2", "game_player_id": STEAM}
+    r = c.recent_matches(steam64=STEAM, limit=2)
+    assert r["averages"]["kills"] == 18 and r["averages"]["adr"] == 91.4, "averages skip missing values"
+    with pytest.raises(ApiError, match="No FACEIT account is linked") as e:
+        c.profile(steam64="76561198000000999")
+    assert e.value.status == 404

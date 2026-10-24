@@ -96,3 +96,19 @@ button.mini { padding: 1px 6px; font-size: 11px; }
 a.btn { background: #1d2433; border: 1px solid var(--line); border-radius: 6px; padding: 5px 10px; color: var(--text); }
 a.btn:hover { border-color: var(--ct); }
 .notshown { font-size: 14px; margin-top: 6px; } .notshown summary { cursor: pointer; color: var(--muted); }
+
+.playerbar { display: flex; align-items: center; gap: 12px; margin-top: 22px; }
+.playerbar h2 { margin: 0; }
+.playerbar select { background: #0d1117; color: var(--text); border: 1px solid var(--line); border-radius: 6px; padding: 6px 10px; font: inherit; }
+.small { font-size: 12px; }
+.profile { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 12px 14px; margin-top: 12px; }
+.profilehead { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 16px; margin-bottom: 12px; }
+.svcname { font-size: 11px; letter-spacing: 0.08em; text-transform: uppercase; color: var(--muted); margin-bottom: 6px; }
+.faceit { display: flex; gap: 10px; align-items: center; }
+.level { width: 34px; height: 34px; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-weight: 800; border: 3px solid #6b7280; }
+.level.lv2 { border-color: #22c55e; } .level.lv4 { border-color: #facc15; } .level.lv8 { border-color: #f97316; } .level.lv10 { border-color: #ef4444; color: #ef4444; }
+.form { display: flex; gap: 3px; align-items: center; margin-top: 8px; flex-wrap: wrap; }
+.wl { width: 20px; height: 20px; border-radius: 4px; font-size: 11px; font-weight: 700; display: flex; align-items: center; justify-content: center; color: #0b0e14; }
+.wl.w { background: var(--good); } .wl.l { background: var(--bad); }
+.form .small { margin-left: 6px; }
+table.compare { margin: 0 0 6px; } .compare td.same { color: var(--text); }

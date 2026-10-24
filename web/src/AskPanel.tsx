@@ -47,7 +47,7 @@ const ICON: Record<string, string> = {
   verified: "✓", supported: "✓", failed: "✗", unsupported: "⚠", unchecked: "?", not_judged: "–",
 };
 
-export default function AskPanel({ id, round, players }: { id: string; round?: number; players: string[] }) {
+export default function AskPanel({ id, round, players, player: chosen }: { id: string; round?: number; players: string[]; player?: string }) {
   const histKey = `cs2.ask.${id}`;
   const [question, setQuestion] = useState("");
   const [player, setPlayer] = useState(store.get("cs2.player") ?? "");
@@ -59,6 +59,7 @@ export default function AskPanel({ id, round, players }: { id: string; round?: n
   });
 
   useEffect(() => { if (player) store.set("cs2.player", player); }, [player]);
+  useEffect(() => { if (chosen) setPlayer(chosen); }, [chosen]);
   useEffect(() => { store.set("cs2.model", model); }, [model]);
 
   const ask = async (q: string) => {
