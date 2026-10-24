@@ -118,7 +118,7 @@ def build_server(
     def get_match_overview(demo_id: DemoId) -> dict[str, Any]:
         """Map, final score per team (with CT/T split) and the full scoreboard: rating (an approximation of
         HLTV Rating 2.0, 1.00 is average) with each player's rank in their team and in the match, impact,
-        K/D/A, ADR, KAST, HS%, opening kills/deaths, traded deaths, clutches and utility damage.
+        K/D/A, ADR, KAST, HS%, opening kills/deaths, traded deaths, clutches, 3k/4k/aces and utility damage.
         Rank and compare players by rating, not kills. Start every match analysis here."""
         return analysis.match_overview(
             store.meta(demo_id), table(demo_id, "rounds"), table(demo_id, "stats"),
@@ -172,6 +172,19 @@ def build_server(
             table(demo_id, "players"), sid, flashes.get("rounds_played") or 0,
         )
         return {**flashes, "grenades": thrown}
+
+    @mcp.tool(annotations=READ_ONLY)
+    @guided
+    def get_multikills(
+        demo_id: DemoId,
+        player: Annotated[str | None, Field(description="Only this player's multi-kills. Omit for everyone's.")] = None,
+        min_kills: Annotated[int, Field(ge=2, le=5, description="Only rounds with at least this many kills (5 = aces).")] = 2,
+    ) -> dict[str, Any]:
+        """Multi-kill rounds: 2k, 3k, 4k and aces per player with the round numbers, plus each multi-kill
+        round's victims, weapons, ticks and whether the round was won. Use it for "when did I get the ace",
+        "how many 4ks", or to find a player's big rounds."""
+        sid = steamid(demo_id, player) if player else None
+        return analysis.multikills(table(demo_id, "kills"), table(demo_id, "rounds"), sid, min_kills)
 
     @mcp.tool(annotations=READ_ONLY)
     @guided

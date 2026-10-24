@@ -345,3 +345,36 @@ def test_round_list_overtime_starts_a_new_half_even_without_a_side_swap(tables):
     rl = A.round_list(tables("rounds"), tables("kills"), tables("round_players"), tables("players"),
                       tables("round_economy"), tables("bomb"), max_rounds=3, overtime_rounds=1)
     assert [(h["rounds"], h["overtime"]) for h in rl["halves"]] == [("1-2", False), ("3-3", False), ("4-4", True)]
+
+
+# ---------------------------------------------------------------- multi-kills
+
+def test_multikills_count_kills_on_enemies_per_round(tables):
+    # bravo: r1 kills delta (600) and charlie after the round ended (1100, still counts like on HLTV)
+    mk = A.multikills(tables("kills"), tables("rounds"))
+    assert [(r["player"], r["round"], r["kills"], r["type"]) for r in mk["rounds"]] == [("bravo", 1, 2, "2k")]
+    r1 = mk["rounds"][0]
+    assert r1["victims"] == ["delta", "charlie"] and r1["after_round_end"] == 1 and r1["round_won"] is True
+    assert mk["by_player"] == [{"name": "bravo", "2k": 1, "3k": 0, "4k": 0, "ace": 0,
+                                "rounds": {"2k": [1], "3k": [], "4k": [], "ace": []}}]
+
+
+def test_an_ace_and_teamkills(tables):
+    import polars as pl
+
+    base = tables("kills")
+    extra = base.filter(pl.col("tick") == 600)  # bravo's kill on delta in round 1, as a template
+    more = pl.concat([extra.with_columns(pl.lit(t).cast(base["tick"].dtype).alias("tick"), pl.lit(v).cast(base["victim_steamid"].dtype).alias("victim_steamid"),
+                                         pl.lit(n).alias("victim_name")) for t, v, n in [(700, 3, "charlie"), (800, 4, "delta"), (900, 3, "charlie")]])
+    teamkill = extra.with_columns(pl.lit(950).cast(base["tick"].dtype).alias("tick"), pl.lit("CT").alias("victim_side"), pl.lit("alpha").alias("victim_name"))
+    kills = pl.concat([base, more, teamkill]).sort("tick")
+    mk = A.multikills(kills, tables("rounds"), steamid=2, min_kills=5)
+    assert [(r["round"], r["kills"], r["type"]) for r in mk["rounds"]] == [(1, 5, "ace")], "the teamkill isn't a 6th kill"
+    assert mk["by_player"][0]["rounds"]["ace"] == [1]
+
+
+def test_scoreboard_has_multikill_columns(tables, store):
+    ov = A.match_overview(store.meta("fakedemo0001"), tables("rounds"), tables("stats"), tables("players"),
+                          tables("round_players"), kills=tables("kills"))
+    assert {"k3", "k4", "aces"} <= set(ov["scoreboard"][0])
+    assert all(r["aces"] == 0 for r in ov["scoreboard"])

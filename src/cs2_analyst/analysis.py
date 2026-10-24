@@ -161,6 +161,16 @@ def match_overview(
             pl.col("steamid").map_elements(lambda s_: counts.get(s_, (0, 0))[0], return_dtype=pl.Int64).alias("clutches_won"),
             pl.col("steamid").map_elements(lambda s_: counts.get(s_, (0, 0))[1], return_dtype=pl.Int64).alias("clutches_played"),
         )
+    multi = {"k3": {}, "k4": {}, "aces": {}}
+    if kills is not None:
+        for r in _multikill_rounds(kills, rounds):
+            key = {3: "k3", 4: "k4"}.get(min(r["kills"], 5), "aces" if r["kills"] >= 5 else None)
+            if key:
+                multi[key][r["_sid"]] = multi[key].get(r["_sid"], 0) + 1
+    stats = stats.with_columns(
+        pl.col("steamid").map_elements(lambda s_, m=m: m.get(s_, 0), return_dtype=pl.Int64).alias(name)
+        for name, m in multi.items()
+    )
     board = (
         with_rating(stats)
         .with_columns(
@@ -175,7 +185,7 @@ def match_overview(
             "name", "team", "rating", "team_rank", "match_rank", "impact", "kills", "deaths", "assists",
             pl.col("adr").round(1), pl.col("kast").round(1), pl.col("headshot_pct").round(1).alias("hs_pct"),
             "opening_kills", "opening_deaths", "traded_deaths",
-            "clutches_won", "clutches_played", "utility_damage",
+            "clutches_won", "clutches_played", "k3", "k4", "aces", "utility_damage",
         )
     )
     return {
@@ -712,6 +722,58 @@ def clutches(
                 "planted; saved = survived a lost round (not a clutch); last_alive = any other lost 1v4/1v5, or a "
                 "1v2/1v3 he didn't attempt (not a clutch). The "
                 "scoreboard's clutch columns use these same rules.",
+    }
+
+
+# ---------------------------------------------------------------- multi-kills
+
+def _multikill_rounds(kills: pl.DataFrame, rounds: pl.DataFrame) -> list[dict[str, Any]]:
+    """Every (player, round) with 2+ kills on enemies. Kills after the round was decided count, like on
+    HLTV: an ace finished on the last enemy after the bomb went off is still an ace."""
+    live = live_rounds(rounds).select("round_num", "winner_side")
+    df = (
+        kills.filter(pl.col("attacker_steamid").is_not_null() & (pl.col("attacker_side") != pl.col("victim_side")))
+        .join(live, on="round_num", how="inner")
+        .sort("tick")
+    )
+    out = []
+    for (sid, rnd), g in df.group_by(["attacker_steamid", "round_num"], maintain_order=True):
+        if g.height < 2:
+            continue
+        out.append({
+            "_sid": sid, "round": rnd, "player": g["attacker_name"][0], "side": g["attacker_side"][0],
+            "kills": g.height, "round_won": g["winner_side"][0] == g["attacker_side"][0],
+            "victims": g["victim_name"].to_list(), "weapons": g.select(weapon_label())["weapon"].to_list(),
+            "ticks": g["tick"].to_list(), "after_round_end": int(g["after_round_end"].sum()),
+        })
+    return sorted(out, key=lambda r: (r["round"], r["ticks"][0]))
+
+
+MULTI_NAMES = {2: "2k", 3: "3k", 4: "4k", 5: "ace"}
+
+
+def multikills(kills: pl.DataFrame, rounds: pl.DataFrame, steamid: int | None = None,
+               min_kills: int = 2, limit: int = 40) -> dict[str, Any]:
+    """Multi-kill rounds (2k, 3k, 4k, aces) per player, each with the round, victims and weapons."""
+    found = _multikill_rounds(kills, rounds)
+    if steamid is not None:
+        found = [r for r in found if r["_sid"] == steamid]
+    by_player: dict[str, dict[str, Any]] = {}
+    for r in found:
+        p = by_player.setdefault(r["player"], {"name": r["player"], "2k": 0, "3k": 0, "4k": 0, "ace": 0,
+                                               "rounds": {"2k": [], "3k": [], "4k": [], "ace": []}})
+        kind = MULTI_NAMES[min(r["kills"], 5)]
+        p[kind] += 1
+        p["rounds"][kind].append(r["round"])
+    shown = [{**{k: v for k, v in r.items() if not k.startswith("_")}, "type": MULTI_NAMES[min(r["kills"], 5)]}
+             for r in found if r["kills"] >= min_kills]
+    shown.sort(key=lambda r: (-r["kills"], r["round"]))
+    return {
+        "by_player": sorted(by_player.values(), key=lambda p: (-p["ace"], -p["4k"], -p["3k"], -p["2k"], p["name"])),
+        "rounds": shown[:limit],
+        "truncated": len(shown) > limit,
+        "note": "Kills on enemies in one round (teamkills don't count). Kills after the round was decided count, "
+                "as on HLTV; after_round_end says how many of them came after. ticks cite each kill.",
     }
 
 

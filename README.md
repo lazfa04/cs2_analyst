@@ -4,7 +4,7 @@ An AI analyst for Counter-Strike 2 match demos. Ask it why you lost, who won the
 
 Two parts:
 
-1. **An MCP server** (phase 1) that turns a `.dem` file into 14 tools any MCP client can use, including Claude Desktop.
+1. **An MCP server** (phase 1) that turns a `.dem` file into 15 tools any MCP client can use, including Claude Desktop.
 2. **A verifying agent** (phase 2) that runs its own loop over those tools, states its answer as structured claims with evidence, and has each claim checked: facts deterministically against the tool results, interpretations by a separate judge model.
 
 ```
@@ -217,6 +217,7 @@ The Falcons run is why the counting tools and the critique pass exist: on 30-rou
 | `get_opening_duels` | A player's first-kill duels by side, round conversion, trades, positions |
 | `get_round_list` | The whole match round by round: winner, first kill, plant, each team's buy, running score; halves (overtime too), rounds won per buy type, first-kill conversion |
 | `get_utility_stats` | Grenades thrown by type, side and before/after the plant, compared with teammates; flashes: enemy vs team vs self blinds (minor blinds under 1.5s separated), costly team flashes; nade damage |
+| `get_multikills` | 2k / 3k / 4k / aces per player with round numbers, victims and weapons ("when did I get the ace?") |
 | `get_clutches` | Clutches counted the way players do (won at any odds; lost only when attempted), with saves and hopeless last-alive rounds listed apart; totals per situation and per player |
 | `get_win_probability` | One round as a win probability timeline: T's chance after every kill, plant and defuse, each event's swing, and the factors behind each estimate |
 | `get_swing_ratings` | Round swing per player (percentage points per round) next to rating, with biggest plays and costliest moments |
@@ -275,7 +276,7 @@ Your own matchmaking demos are under `.../Counter-Strike Global Offensive/game/c
 
 ## Tests
 
-`uv run pytest` runs 178 tests with no network or API key:
+`uv run pytest` runs 182 tests with no network or API key:
 
 - a hand-scripted 2v2 match that goes through the real ingest pipeline
 - mocked HTTP for the FACEIT and Leetify clients

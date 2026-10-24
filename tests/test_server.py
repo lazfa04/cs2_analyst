@@ -14,7 +14,7 @@ from .conftest import DEMO_ID
 EXPECTED_TOOLS = {
     "list_demos", "ingest_demo", "get_match_overview", "get_round_summary", "get_opening_duels",
     "get_utility_stats", "get_clutches", "get_round_list", "find_kills", "get_faceit_profile",
-    "get_win_probability", "get_swing_ratings",
+    "get_win_probability", "get_swing_ratings", "get_multikills",
     "get_recent_faceit_matches", "get_leetify_profile",
 }
 
