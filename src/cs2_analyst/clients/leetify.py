@@ -48,8 +48,13 @@ class LeetifyClient:
             "ranks": p.get("ranks"),
             "rating": p.get("rating"),
             "stats": {k: stats.get(k) for k in KEY_STATS if k in stats},
+            # Competitive matches only: Leetify also lists practice and fun modes (e.g. "manual_rush").
             "recent_matches": [
                 {k: m.get(k) for k in ("id", "finished_at", "map_name", "outcome", "score", "leetify_rating", "data_source")}
-                for m in (p.get("recent_matches") or [])[:recent]
-            ],
+                for m in (p.get("recent_matches") or [])
+                if not str(m.get("data_source") or "").startswith("manual")
+            ][:recent],
+            "note": "ranks.faceit and ranks.faceit_elo are Leetify's last sync and can be out of date; "
+                    "get_faceit_profile has the current FACEIT level and Elo. Leetify ratings are per-round "
+                    "contributions (0.05 = +5 per 100 rounds), not percentages.",
         }

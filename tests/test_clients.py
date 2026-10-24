@@ -120,3 +120,14 @@ def test_leetify_rejects_non_steam64_before_calling():
 ])
 def test_faceit_score_is_from_the_players_side(raw, result, own):
     assert FaceitClient._own_score(raw, result) == own
+
+
+def test_leetify_skips_practice_matches_and_flags_stale_faceit_rank():
+    def handler(request):
+        return httpx.Response(200, json={"name": "x", "ranks": {"faceit_elo": 1596}, "recent_matches": [
+            {"id": "a", "map_name": "de_inferno", "data_source": "matchmaking"},
+            {"id": "b", "map_name": "rush_001", "data_source": "manual_rush"},
+            {"id": "c", "map_name": "de_dust2", "data_source": "faceit"}]})
+    p = LeetifyClient("lk", transport=httpx.MockTransport(handler)).profile("76561198802039309")
+    assert [m["id"] for m in p["recent_matches"]] == ["a", "c"]
+    assert "out of date" in p["note"]
