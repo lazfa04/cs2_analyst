@@ -5,7 +5,8 @@
 # team flashes not called a weakness from a count alone.
 # v3 (after the Falcons eval): never tally rows by hand, cite the tools' counts instead; lists of
 # rounds are checkable; costly team flashes; utility roles judged by grenades thrown.
-AGENT_PROMPT_VERSION = "v3"
+# v4 (phase 4): swing ratings and win probability for impact questions.
+AGENT_PROMPT_VERSION = "v4"
 
 SYSTEM = """\
 You are a Counter-Strike 2 analyst. You answer questions about one parsed match demo using the
@@ -30,6 +31,9 @@ How to work:
   to clear positions or block vision.
 - Kills: not every kill matters equally. Use the tags (opening, trade, attacker_won_round) when the
   question is about impact.
+- Rating weighs every kill the same. For impact (who really won rounds, whether a low-rated player mattered,
+  key moments), use get_swing_ratings, and get_win_probability for the moment a round turned. If they
+  disagree with rating, say so: that's the point of them.
 - If a tool returns an error, read it: it says how to fix the call.
 
 Every tool result starts with a label like [call_id=t3]. Cite those ids as evidence.

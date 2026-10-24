@@ -160,11 +160,16 @@ def main(argv: list[str] | None = None) -> None:
     a.add_argument("--json", action="store_true", help="Print the result as JSON.")
     a.add_argument("--trace-dir", default=os.getenv("CS2_TRACE_DIR", "traces"))
     from ..evals import cli as eval_cli
+    from ..winprob import cli as model_cli
 
     eval_cli.add_parser(sub)
+    model_cli.add_parser(sub)
     args = p.parse_args(argv)
     if args.command == "eval":
         eval_cli.run(args)
+        return
+    if args.command == "model":
+        model_cli.run(args)
         return
 
     if not os.getenv("ANTHROPIC_API_KEY"):

@@ -228,6 +228,51 @@ def build_server(
             headshot=headshot, traded=traded, limit=limit, offset=offset,
         )
 
+    # ------------------------------------------------------------ win probability (phase 4)
+
+    @functools.cache
+    def winprob_model():
+        from .winprob import model as wp
+
+        return wp.load(settings.cache_dir / "winprob")[0]  # ModelMissing is an AnalystError: guided shows it
+
+    def swing_states(demo_id: str):
+        from .winprob import swing as sw
+        from .winprob.features import states_for
+
+        return sw.with_probabilities(winprob_model(), states_for(store, demo_id))
+
+    @mcp.tool(annotations=READ_ONLY)
+    @guided
+    def get_win_probability(
+        demo_id: DemoId,
+        round: Annotated[int, Field(ge=1, description="Round number, starting at 1.")],
+    ) -> dict[str, Any]:
+        """One round as a win probability timeline: T's chance to win after every kill, the plant and the
+        defuse, how much each event swung it, and which factors (players alive, health, equipment, kits,
+        bomb, clock) drove each estimate. Use it to find the moment a round was won or lost."""
+        from .winprob import swing as sw
+
+        states = swing_states(demo_id)
+        if round not in set(states["round"].to_list()):
+            valid = sorted(set(states["round"].to_list()))
+            raise AnalystError(f"Round {round} has no states. Valid rounds: {valid[0]}-{valid[-1]}.")
+        return sw.round_timeline(states, winprob_model(), round, tick_rate(demo_id))
+
+    @mcp.tool(annotations=READ_ONLY)
+    @guided
+    def get_swing_ratings(demo_id: DemoId) -> dict[str, Any]:
+        """Round swing per player: the average change in their team's chance to win the round caused by their
+        kills, assists, deaths, plants and defuses (percentage points per round), next to their rating, with
+        each player's biggest plays and costliest moments. Rating weighs every kill the same; swing shows which
+        kills mattered (opening kills, clutch and post-plant kills). Use it for impact questions."""
+        from .winprob import swing as sw
+
+        rp = table(demo_id, "round_players")
+        labels = analysis.team_labels(rp, table(demo_id, "players"))
+        ratings = dict(analysis.with_rating(table(demo_id, "stats")).select("steamid", "rating").iter_rows())
+        return sw.swing_ratings(swing_states(demo_id), rp, labels, ratings)
+
     # ------------------------------------------------------------ stats APIs
 
     @mcp.tool(annotations=READ_ONLY_REMOTE)

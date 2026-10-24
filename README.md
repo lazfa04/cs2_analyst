@@ -4,7 +4,7 @@ An AI analyst for Counter-Strike 2 match demos. Ask it why you lost, who won the
 
 Two parts:
 
-1. **An MCP server** (phase 1) that turns a `.dem` file into 12 tools any MCP client can use, including Claude Desktop.
+1. **An MCP server** (phase 1) that turns a `.dem` file into 14 tools any MCP client can use, including Claude Desktop.
 2. **A verifying agent** (phase 2) that runs its own loop over those tools, states its answer as structured claims with evidence, and has each claim checked: facts deterministically against the tool results, interpretations by a separate judge model.
 
 ```
@@ -112,6 +112,32 @@ Failed facts go back to the agent with the real values, so it can fix or drop th
 
 **Everything is traced.** Each run writes a JSONL file to `traces/`: every model call (tokens, cache hits, latency, cost) and every tool call (args, result, latency, errors). Costs use the published per-model prices in `agent/pricing.py`.
 
+### Phase 4: win probability and round swing
+
+Rating weighs every kill the same, so it misses what the expert labels kept pointing at: TeSeS rated 0.87 on Dust2 but won two clutches and converted every opening win, and the judge kept accepting "below average" for him. Round swing (the idea behind HLTV's Rating 3.0, whose formula isn't public) measures how much each play changed the team's chance to win the round. That needs a win probability model.
+
+**Game states.** Each round becomes a sequence of states: freeze end, then after every kill, the plant and the defuse. Features are what a caster sees on the HUD: players alive, their total health, the freeze-end buy of the players still alive, CT defuse kits, bomb down or not, round clock or bomb timer. The label is whether T won. 5 public demos give 103 rounds and 727 states; `cs2-agent model train --ingest` adds every demo in your folder.
+
+**Evaluated leave-one-demo-out.** States from the same round are near-duplicates, so a random split would leak; every score is on a match the model never saw, against two baselines:
+
+| Model (5 demos, 103 rounds) | Log loss | Brier | AUC |
+| --- | --- | --- | --- |
+| Always the T win rate | 0.724 | 0.265 | – |
+| Players alive only (logistic) | 0.537 | 0.185 | 0.780 |
+| Logistic, all features, signs constrained | 0.477 | 0.158 | 0.847 |
+| XGBoost, monotone constraints | 0.488 | 0.163 | 0.837 |
+| **Shipped: average of the two** | **0.474** | **0.157** | **0.846** |
+
+Calibration (the thing swing depends on, since swings are differences between probabilities) is within a few points in every bucket: when it says 90%, T won 92%.
+
+**Decisions the data forced:**
+- **Monotone constraints.** With a few hundred rounds a tree model can learn that a sixth CT alive helps T. Every feature has a fixed direction (more Ts alive never lowers T's chance), enforced in XGBoost and as coefficient bounds in the logistic model. The plain logistic model had learned "more round time left hurts T", the time-pressure effect reversed by confounding; the constrained one scores better.
+- **Shallow trees over accurate ones.** Deeper XGBoost had slightly better log loss but was overconfident at the extremes (said 5% when T won 14%), which inflates swings.
+- **An ensemble for credit assignment.** On this little data a constrained logistic model is as good as XGBoost, and XGBoost is coarse: about 8% of kills landed in the same tree leaves before and after and got zero swing. Averaging the two halves that (4%) and cuts kills that move the probability the wrong way to under 1%. With more data XGBoost should pull ahead; the training report shows all of them, so that's visible.
+- **Explanations without an extra dependency.** XGBoost's built-in TreeSHAP and the linear model's exact contributions, averaged, give the reasons behind each estimate ("CT health pushes CT, bomb planted pushes T").
+
+**Swing credit.** For a kill, the killer's team gains what the victim's team loses: the killer gets the gain (75% with an assist, the assister 25%), the victim gets the loss. The planter gets the plant's swing, the defuser everything that was left. The starting probability (the economy) and the last jump when a round ends on time or the bomb aren't credited. A player's swing rating is their average per round, in percentage points. On the FACEIT demo, babaya0310 rates 1.02 (6th) but ranks 3rd on swing; oh-_- rates 1.18 (3rd) but is neutral on swing.
+
 ## Evals
 
 "It looks right" isn't evidence, so the agent is measured on a fixed eval set: every question in `evals/cases.toml` runs against every demo (your own matches plus a public pro demo, so the numbers are reproducible).
@@ -192,6 +218,8 @@ The Falcons run is why the counting tools and the critique pass exist: on 30-rou
 | `get_round_list` | The whole match round by round: winner, first kill, plant, each team's buy, running score; halves (overtime too), rounds won per buy type, first-kill conversion |
 | `get_utility_stats` | Grenades thrown by type, side and before/after the plant, compared with teammates; flashes: enemy vs team vs self blinds (minor blinds under 1.5s separated), costly team flashes; nade damage |
 | `get_clutches` | Clutches counted the way players do (won at any odds; lost only when attempted), with saves and hopeless last-alive rounds listed apart; totals per situation and per player |
+| `get_win_probability` | One round as a win probability timeline: T's chance after every kill, plant and defuse, each event's swing, and the factors behind each estimate |
+| `get_swing_ratings` | Round swing per player (percentage points per round) next to rating, with biggest plays and costliest moments |
 | `find_kills` | Filterable, paginated kill feed with counts over all matches: by attacker, victim, side and round, plus opening/trade/round-won tags |
 | `get_faceit_profile` | FACEIT level, ELO, lifetime stats, Steam64 ID |
 | `get_recent_faceit_matches` | Recent FACEIT matches with result, K/D, ADR |
@@ -215,6 +243,16 @@ uv run cs2-agent ask match.dem "Why did we lose the CT half?" --player YourName
 
 `match.dem` can be a full path, a file name inside `CS2_DEMO_DIR`, or a cached demo id. Options: `--model` (default `claude-sonnet-5-5`), `--judge-model` (default `claude-haiku-5-5`), `--no-judge`, `--max-steps`, `--max-revisions`, `--json`.
 
+### Train the win probability model (free, no API)
+
+```bash
+uv run cs2-agent model train --ingest          # parse every demo in CS2_DEMO_DIR, train, print the CV report
+uv run cs2-agent model swing match.dem         # swing per round vs rating for every player
+uv run cs2-agent model swing match.dem --round 19   # one round, step by step
+```
+
+The model lives in the cache folder next to the parsed demos. Retrain whenever you add demos; the agent's `get_win_probability` and `get_swing_ratings` tools use it.
+
 ### Claude Desktop
 
 Add this to `claude_desktop_config.json` (Settings > Developer > Edit Config), with your own paths:
@@ -237,7 +275,7 @@ Your own matchmaking demos are under `.../Counter-Strike Global Offensive/game/c
 
 ## Tests
 
-`uv run pytest` runs 162 tests with no network or API key:
+`uv run pytest` runs 178 tests with no network or API key:
 
 - a hand-scripted 2v2 match that goes through the real ingest pipeline
 - mocked HTTP for the FACEIT and Leetify clients
@@ -259,7 +297,7 @@ That demo is public in [awpy-fixtures](https://github.com/pnxenopoulos/awpy-fixt
 - [x] Phase 2: agent loop with findings schema, deterministic verifier, judge and tracing
 - [x] Phase 3: eval runner, metrics with a no-verifier baseline, blind labelling and judge agreement
 - [ ] Phase 3b: labelled "key mistakes" per match, to measure whether the agent finds what matters
-- [ ] Phase 4: explainable round win probability model (XGBoost + SHAP)
+- [x] Phase 4: explainable round win probability model (XGBoost + logistic ensemble, TreeSHAP) and round swing rating
 - [ ] Phase 5: web app
 
 Built on [awpy](https://github.com/pnxenopoulos/awpy), the [MCP Python SDK](https://github.com/modelcontextprotocol/python-sdk) and the [Anthropic API](https://platform.claude.com/docs).
