@@ -109,3 +109,46 @@ def test_csgo_dir_from_env(tmp_path, monkeypatch):
 def test_upload_rejects_non_demos(client):
     r = client.post("/api/upload", files={"file": ("notes.txt", b"hi")})
     assert r.status_code == 400 and ".dem" in r.json()["detail"]
+
+
+def test_ask_runs_the_verifying_agent_with_round_context(store, tmp_path, monkeypatch):
+    import json as _json
+
+    from cs2_analyst.agent.llm import Block, LLMResponse
+
+    usage = {"input_tokens": 100, "output_tokens": 20, "cache_read_input_tokens": 0, "cache_creation_input_tokens": 0}
+
+    class Scripted:
+        def __init__(self):
+            self.turns = [
+                [{"type": "tool_use", "id": "a", "name": "get_round_summary", "input": {"demo_id": DEMO_ID, "round": 2}}],
+                [{"type": "tool_use", "id": "b", "name": "submit_report", "input": {
+                    "summary": "T won round 2.", "claims": [{"id": "c1", "kind": "fact", "text": "T won round 2",
+                                                            "supports": [], "checks": [{"call_id": "t1", "path": "winner_side", "expected": "T"}]}]}}],
+            ]
+            self.first = None
+
+        async def create(self, *, model, system, tools, messages, max_tokens):
+            self.first = self.first or messages[0]["content"]
+            blocks = self.turns.pop(0)
+            return LLMResponse([Block(**b) for b in blocks], blocks, dict(usage), "tool_use")
+
+    llm = Scripted()
+    monkeypatch.setenv("CS2_TRACE_DIR", str(tmp_path / "traces"))
+    settings = Settings(cache_dir=store.cache_dir, demo_dir=None, faceit_api_key=None, leetify_api_key=None,
+                        http_cache_ttl_s=0)
+    c = TestClient(create_app(settings=settings, store=store, llm_factory=lambda: llm))
+    r = c.post(f"/api/demos/{DEMO_ID}/ask", json={"question": "Who won?", "round": 2, "player": "alpha", "judge": False})
+    body = r.json()
+    assert r.status_code == 200, body
+    assert body["summary"] == "T won round 2." and body["claims"][0]["status"] == "verified"
+    assert body["tools_used"] == [{"tool": "get_round_summary", "args": {"round": 2}, "error": False}]
+    assert "(I'm looking at round 2.) Who won?" in llm.first and "'alpha'" in llm.first
+    assert list((tmp_path / "traces").glob("*.jsonl")), "the trace is written like the CLI's"
+    _json.dumps(body)
+
+
+def test_ask_without_a_key_says_so(client, monkeypatch):
+    monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+    r = client.post(f"/api/demos/{DEMO_ID}/ask", json={"question": "hi"})
+    assert r.status_code == 400 and "ANTHROPIC_API_KEY" in r.json()["detail"]

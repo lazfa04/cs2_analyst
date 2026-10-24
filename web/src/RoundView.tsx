@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { api, Replay, WinProb } from "./api";
+import AskPanel from "./AskPanel";
 import Cs2Modal from "./Cs2Modal";
 import ReplayCanvas from "./ReplayCanvas";
 import WinChart from "./WinChart";
@@ -43,7 +44,10 @@ export default function RoundView({ id, n }: { id: string; n: number }) {
   }, [playing, speed, replay, endTick]);
 
   useEffect(() => {
-    const key = (e: KeyboardEvent) => { if (e.code === "Space") { e.preventDefault(); setPlaying((p) => !p); } };
+    const key = (e: KeyboardEvent) => {
+      const typing = (e.target as HTMLElement)?.tagName === "INPUT" || (e.target as HTMLElement)?.tagName === "SELECT";
+      if (e.code === "Space" && !typing) { e.preventDefault(); setPlaying((p) => !p); }
+    };
     addEventListener("keydown", key);
     return () => removeEventListener("keydown", key);
   }, []);
@@ -112,6 +116,7 @@ export default function RoundView({ id, n }: { id: string; n: number }) {
             ))}
           </ul>
           <p className="muted">Swing = change in the killer's team's chance to win the round, in points.</p>
+          <AskPanel id={id} round={n} players={replay.players.map((p) => p.name)} />
         </div>
       </div>
       {cs2 && <Cs2Modal id={id} tick={cs2.tick} label={cs2.label} onClose={() => setCs2(null)} />}

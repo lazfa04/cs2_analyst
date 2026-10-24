@@ -115,3 +115,17 @@ def test_coaches_are_not_players(tables):
     rp = tables("round_players")
     assert "coach" not in rp["name"].to_list(), "dead at freeze end every round: a coach, not a player"
     assert rp.group_by("round_num").len()["len"].to_list() == [4, 4, 4, 4]
+
+
+def test_a_moved_demo_is_found_again_in_the_demo_folder(store, tmp_path, monkeypatch):
+    import json
+
+    from .conftest import DEMO_ID
+
+    moved_dir = tmp_path / "test-demos"
+    moved_dir.mkdir()
+    (moved_dir / "fake.dem").write_bytes(b"demo")
+    monkeypatch.setenv("CS2_DEMO_DIR", str(moved_dir))
+    assert store.source_path(DEMO_ID) == moved_dir / "fake.dem"
+    meta = json.loads((store.cache_dir / DEMO_ID / "meta.json").read_text())
+    assert meta["source"] == str(moved_dir / "fake.dem"), "the new location is remembered"

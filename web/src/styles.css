@@ -60,3 +60,20 @@ button.mini { padding: 1px 6px; font-size: 11px; }
 .modal { background: var(--panel); border: 1px solid var(--line); border-radius: 12px; padding: 20px 24px; width: min(560px, 92vw); }
 .modal h3 { margin-top: 0; } .cmds li { margin: 10px 0; } .cmd { display: flex; gap: 8px; align-items: center; margin-top: 6px; } .cmd code { flex: 1; }
 .close { margin-top: 10px; }
+
+.ask { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 12px 14px; margin-top: 18px; }
+.ask h3 { margin-top: 0; }
+.askrow { display: flex; gap: 8px; margin-bottom: 8px; }
+.askrow input { flex: 1; background: #0d1117; color: var(--text); border: 1px solid var(--line); border-radius: 6px; padding: 7px 10px; font: inherit; }
+.askrow select { background: #0d1117; color: var(--text); border: 1px solid var(--line); border-radius: 6px; padding: 5px 8px; font: inherit; }
+.chips { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 8px; }
+.chip { font-size: 12px; padding: 3px 9px; border-radius: 999px; }
+.answer { border-top: 1px solid var(--line); padding: 12px 0 4px; }
+.answer .q { color: var(--muted); font-size: 13px; margin-bottom: 4px; }
+.answer .a { line-height: 1.5; }
+.answer details { margin-top: 8px; font-size: 14px; } .answer summary { cursor: pointer; color: var(--muted); }
+.claims { list-style: none; padding: 0; margin: 6px 0; font-size: 14px; }
+.claims li { display: flex; gap: 8px; padding: 3px 0; } .claims .ic { width: 14px; flex: none; }
+.claims .verified .ic, .claims .supported .ic { color: var(--good); } .claims .failed .ic { color: var(--bad); } .claims .unsupported .ic { color: #facc15; }
+.dropped { margin-top: 8px; font-size: 14px; }
+.answer .meta { font-size: 12px; margin-top: 8px; }

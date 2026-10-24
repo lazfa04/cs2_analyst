@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { api, Overview, RoundList, SwingPlayer } from "./api";
+import AskPanel from "./AskPanel";
 
 type SortKey = "rating" | "swing";
 
@@ -79,6 +80,8 @@ export default function Match({ id }: { id: string }) {
           </tbody>
         </table>
       ))}
+
+      <AskPanel id={id} players={ov.scoreboard.map((r) => r.name)} />
 
       {rounds && (
         <>

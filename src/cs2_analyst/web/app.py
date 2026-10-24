@@ -30,7 +30,16 @@ class IngestBody(BaseModel):
     file: str
 
 
-def create_app(settings: Settings | None = None, store: DemoStore | None = None) -> FastAPI:
+class AskBody(BaseModel):
+    question: str
+    player: str | None = None       # "I" / "my" refer to this player
+    round: int | None = None        # the round on screen, given to the agent as context
+    model: str = "claude-haiku-5-5"
+    judge: bool = True
+
+
+def create_app(settings: Settings | None = None, store: DemoStore | None = None,
+               llm_factory=None) -> FastAPI:
     settings = settings or get_settings()
     store = store or DemoStore(settings.cache_dir)
     app = FastAPI(title="cs2-analyst", version="0.1.0")
@@ -150,12 +159,57 @@ def create_app(settings: Settings | None = None, store: DemoStore | None = None)
     def radar(map_name: str) -> FileResponse:
         return FileResponse(R.radar_file(map_name), media_type="image/png")
 
+    # ------------------------------------------------------------ ask the agent
+
+    @app.post("/api/demos/{demo_id}/ask")
+    async def ask(demo_id: str, body: AskBody) -> dict[str, Any]:
+        """The same verifying agent as `cs2-agent ask`: tools over MCP, every fact checked, the judge reviews
+        conclusions and the summary. Costs API credits (Haiku about half a cent, Sonnet about 4 cents)."""
+        import os
+
+        from ..agent.cli import to_json
+        from ..agent.loop import AgentConfig, run_agent
+        from ..agent.toolbox import Toolbox
+        from ..server import build_server
+
+        if llm_factory is None and not os.getenv("ANTHROPIC_API_KEY"):
+            raise AnalystError("ANTHROPIC_API_KEY isn't set. Add it to .env and restart the app.")
+        if not body.question.strip():
+            raise AnalystError("Ask a question.")
+        meta = store.meta(demo_id)
+        demo = {"demo_id": demo_id, "map": meta.get("map"), "rounds_played": meta.get("rounds_played")}
+        question = body.question.strip()
+        if body.round is not None:
+            question = f"(I'm looking at round {body.round}.) {question}"
+        cfg = AgentConfig(model=body.model, judge_model="claude-haiku-5-5" if body.judge else None,
+                          player=body.player or None)
+        if llm_factory is not None:
+            llm = llm_factory()
+        else:
+            from ..agent.llm import AnthropicLLM
+
+            llm = AnthropicLLM()
+        error, result = None, None
+        async with Toolbox.connect(build_server(settings, store=store, log_level="WARNING")) as toolbox:
+            try:
+                result = await run_agent(question, demo, llm, toolbox, cfg)
+            except Exception as e:  # API errors (no credit, bad key) come back as a message, not a 500
+                status = getattr(e, "status_code", None)
+                error = f"{'Anthropic API error ' + str(status) + ': ' if status else ''}{getattr(e, 'message', None) or e}"
+        if error:
+            raise AnalystError(error)
+        result.trace.write(Path(os.getenv("CS2_TRACE_DIR", "traces")))
+        steps = [{"tool": e["name"], "args": {k: v for k, v in (e.get("args") or {}).items() if k != "demo_id"},
+                  "error": e["is_error"]}
+                 for e in result.trace.events if e["event"] == "tool_call"]
+        return {**to_json(result), "tools_used": steps, "model": body.model}
+
     # ------------------------------------------------------------ watch in CS2
 
     @app.get("/api/demos/{demo_id}/cs2")
     def cs2_info(demo_id: str, tick: int | None = None) -> dict[str, Any]:
         meta = store.meta(demo_id)
-        source = Path(meta.get("source") or "")
+        source = store.source_path(demo_id)
         game = cs2.csgo_dir()
         return {
             "game_dir": str(game) if game else None,
@@ -165,7 +219,7 @@ def create_app(settings: Settings | None = None, store: DemoStore | None = None)
 
     @app.post("/api/demos/{demo_id}/cs2/prepare")
     def cs2_prepare(demo_id: str) -> dict[str, Any]:
-        source = Path(store.meta(demo_id).get("source") or "")
+        source = store.source_path(demo_id)
         target = cs2.prepare(source, cs2.csgo_dir())
         return {"prepared": True, "path": str(target)}
 

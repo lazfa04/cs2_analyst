@@ -145,6 +145,7 @@ Calibration (the thing swing depends on, since swings are differences between pr
 - **Matches:** parse demos from your folder or upload one.
 - **Match page:** scoreboard with rating and swing side by side (rank by either), 3k/4k/aces, and a strip of rounds coloured by winner with buys, plants and multi-kills.
 - **Round page:** a **2D replay** on the map's radar (players with view direction and health, smokes, molotovs, the bomb, deaths and kill tracers; play, pause, 0.5x to 4x, scrub), synced with the **win probability chart**: every kill is a dot sized by its swing, click it to jump the replay there. The kill feed shows each kill's swing.
+- **Ask the analyst:** the same verifying agent as `cs2-agent ask`, on the match page or on a round (the round on screen is passed as context). Pick who "I" is and the model (Haiku about half a cent a question, Sonnet about 4 cents). Answers show which facts were checked, any that didn't hold up, which tools the agent used, and the cost; rounds mentioned in the answer link to their replay.
 - **Watch in CS2:** copies the demo into CS2's folder and gives the two console commands (`playdemo`, `demo_gototick`) that open the real 3D replay 5 seconds before any moment. A web page can't control the game, so it's copy and paste.
 
 Decisions:
@@ -299,7 +300,7 @@ Your own matchmaking demos are under `.../Counter-Strike Global Offensive/game/c
 
 ## Tests
 
-`uv run pytest` runs 192 tests with no network or API key:
+`uv run pytest` runs 194 tests with no network or API key:
 
 - a hand-scripted 2v2 match that goes through the real ingest pipeline
 - mocked HTTP for the FACEIT and Leetify clients

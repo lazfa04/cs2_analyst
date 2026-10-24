@@ -36,7 +36,7 @@ def ensure_replay_cache(store: DemoStore, demo_id: str) -> None:
     d = _replay_dir(store, demo_id)
     if all((d / f"{n}.parquet").exists() for n in REPLAY_FILES):
         return
-    source = Path(store.meta(demo_id).get("source") or "")
+    source = store.source_path(demo_id)
     if not source.is_file():
         raise AnalystError(f"The replay needs the original demo file, which is no longer at '{source}'. "
                            "Put it back (or ingest it again from its new location).")

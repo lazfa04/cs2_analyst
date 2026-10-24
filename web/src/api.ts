@@ -118,6 +118,26 @@ export interface Replay {
   units_per_px: number;
 }
 
+export interface Claim {
+  id: string;
+  kind: "fact" | "interpretation";
+  text: string;
+  status: "verified" | "failed" | "unchecked" | "supported" | "unsupported" | "not_judged";
+  note: string | null;
+}
+
+export interface Answer {
+  question: string;
+  summary: string | null;
+  stop_reason: string;
+  claims: Claim[];
+  summary_issues: string[];
+  summary_contradictions: string[];
+  tools_used: { tool: string; args: Record<string, unknown>; error: boolean }[];
+  usage: { cost_usd: number | null; elapsed_s: number; tool_calls: number };
+  model: string;
+}
+
 export interface Cs2Info {
   game_dir: string | null;
   prepared: boolean;
@@ -148,5 +168,7 @@ export const api = {
   winprob: (id: string, n: number) => req<WinProb>(`/api/demos/${id}/rounds/${n}/winprob`),
   replay: (id: string, n: number) => req<Replay>(`/api/demos/${id}/rounds/${n}/replay`),
   cs2: (id: string, tick?: number) => req<Cs2Info>(`/api/demos/${id}/cs2${tick !== undefined ? `?tick=${tick}` : ""}`),
+  ask: (id: string, body: { question: string; player?: string; round?: number; model: string }) =>
+    req<Answer>(`/api/demos/${id}/ask`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) }),
   cs2Prepare: (id: string) => req<{ prepared: boolean; path: string }>(`/api/demos/${id}/cs2/prepare`, { method: "POST" }),
 };

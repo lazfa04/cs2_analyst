@@ -64,17 +64,30 @@ class FaceitClient:
             },
         }
 
+    @staticmethod
+    def _own_score(score: Any, result: str | None) -> Any:
+        """FACEIT's Score is in the match's team order, not the player's: a loss can read "13 / 11".
+        Put the player's team first, using the result to tell which side is theirs."""
+        try:
+            a, b = (int(x) for x in str(score).replace(" ", "").split("/"))
+        except ValueError:
+            return score
+        if result in ("win", "loss") and a != b and (a > b) != (result == "win"):
+            a, b = b, a
+        return f"{a}-{b}"
+
     def recent_matches(self, nickname: str, limit: int = 10) -> dict[str, Any]:
         p = self._player(nickname)
         data = self._c.get(f"/players/{p['player_id']}/games/{GAME}/stats", {"limit": max(1, min(limit, 30))})
         matches = []
         for item in data.get("items", []):
             s = item.get("stats", {})
+            result = {"1": "win", "0": "loss"}.get(str(s.get("Result")), s.get("Result"))
             matches.append({
                 "match_id": s.get("Match Id"),
                 "map": s.get("Map"),
-                "result": {"1": "win", "0": "loss"}.get(str(s.get("Result")), s.get("Result")),
-                "score": s.get("Score"),
+                "result": result,
+                "score": self._own_score(s.get("Score"), result),  # player's team first
                 "kills": _num(s.get("Kills")),
                 "deaths": _num(s.get("Deaths")),
                 "kd": _num(s.get("K/D Ratio")),

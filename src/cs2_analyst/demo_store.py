@@ -252,14 +252,31 @@ class DemoStore:
         self._load.cache_clear()
         return {**meta, "cached": False}
 
+    def source_path(self, demo_id: str) -> Path:
+        """Where the demo's .dem is now. If it was moved (e.g. into a subfolder), look for the same file
+        name in CS2_DEMO_DIR, and remember the new place."""
+        meta_file = self.cache_dir / demo_id / "meta.json"
+        m = json.loads(meta_file.read_text())
+        p = Path(m.get("source") or "")
+        if p.is_file():
+            return p
+        from .config import get_settings
+
+        demo_dir = get_settings().demo_dir
+        moved = demo_dir / p.name if demo_dir and p.name else None
+        if moved and moved.is_file():
+            meta_file.write_text(json.dumps({**m, "source": str(moved)}, indent=2))
+            return moved
+        return p
+
     def refresh_stale(self, on_progress=lambda name: None) -> list[str]:
         """Re-parse cached demos written by an older SCHEMA_VERSION, when their .dem is still around.
         Returns the demo_ids refreshed."""
         done = []
         for meta_file in sorted(self.cache_dir.glob("*/meta.json")):
             m = json.loads(meta_file.read_text())
-            source = Path(m.get("source") or "")
-            if m.get("schema_version") != SCHEMA_VERSION and source.is_file():
+            source = self.source_path(m["demo_id"]) if m.get("schema_version") != SCHEMA_VERSION else None
+            if source is not None and source.is_file():
                 on_progress(source.name)
                 self.ingest(source, force=True)
                 done.append(m["demo_id"])

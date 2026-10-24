@@ -109,3 +109,14 @@ def test_leetify_rejects_non_steam64_before_calling():
     client = LeetifyClient(transport=httpx.MockTransport(lambda r: pytest.fail("should not call API")))
     with pytest.raises(ApiError, match="17 digits"):
         client.profile("afzal")
+
+
+@pytest.mark.parametrize("raw,result,own", [
+    ("13 / 11", "loss", "11-13"),   # FACEIT lists team 1 first; this player was on the losing team
+    ("7 / 13", "win", "13-7"),
+    ("13 / 9", "win", "13-9"),
+    ("8 / 13", "loss", "8-13"),
+    ("weird", "win", "weird"),
+])
+def test_faceit_score_is_from_the_players_side(raw, result, own):
+    assert FaceitClient._own_score(raw, result) == own
