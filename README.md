@@ -4,7 +4,7 @@ An AI analyst for Counter-Strike 2 match demos. Ask it why you lost, who won the
 
 Two parts:
 
-1. **An MCP server** (phase 1) that turns a `.dem` file into 15 tools any MCP client can use, including Claude Desktop.
+1. **An MCP server** (phase 1) that turns a `.dem` file into 16 tools any MCP client can use, including Claude Desktop.
 2. **A verifying agent** (phase 2) that runs its own loop over those tools, states its answer as structured claims with evidence, and has each claim checked: facts deterministically against the tool results, interpretations by a separate judge model.
 
 ```
@@ -153,6 +153,26 @@ Decisions:
 - **Radar images and coordinates** come from awpy's map data; world coordinates are converted to radar pixels on the server, so the frontend just draws.
 - **Same functions, no second implementation.** Every API route is a thin call into `analysis.py` or the model, like the MCP server, so the app, the agent and the evals can't disagree.
 
+### Phase 6 (started): death review
+
+The first piece of the coach: `get_death_review` gives every death the context that explains it, from the position snapshots, the grenade throws, the blinds and the swing model: **walking distance** to the nearest living teammate over the map's nav mesh (straight-line distance ignores walls, and a trade needs the on-foot distance), how many teammates could trade, whether it was traded, opening deaths with or without a teammate's flash, blind time left, grenades still held, and what the death cost the round. Flags (`isolated`, `dry_opening`, `died_with_utility`, `died_blind`) are thresholds on those facts. The agent is told to treat them as facts to weigh, never verdicts: an isolated lurk can be the plan, and a dry peek can be right on an eco.
+
+A fifth flag, `untraded_with_support`, came from the first real answer: a death in round 7 of the author's own match was untraded with two teammates 275 units away. That's the teammates' miss, not the victim's, and it's worth seeing separately. The same answer noticed the review counted 16 deaths against the scoreboard's 18; the two were deaths after the round was decided, which aren't reviewed, so the tool now reports them separately instead of leaving the numbers to disagree.
+
+A bug the tests caught on the way: snapshots are 8 ticks apart, and "the latest snapshot before the death" could come from a previous round. Spacing now only uses snapshots from the last second.
+
+**First expert labels** (`evals/death_labels.toml`): the player reviewed five of his own flagged deaths in the replay. Every flag was factually right, but a flag pointed at what actually went wrong only 2 times in 5:
+
+| Round | Flag | What really happened | Flag was the issue? |
+| --- | --- | --- | --- |
+| 3 | isolated | took an untradeable fight alone **after the plant** | yes |
+| 5 | isolated, utility | lurking: isolation is the role | no |
+| 7 | untraded with support | teammates missed the trade on a lined-up entry | yes |
+| 12 | utility | flanked in a chaotic mid-round | no |
+| 16 | isolated (909 units) | position fine, teammate supporting; lost the duel | no |
+
+So distance alone can't separate a mistake from a plan: rounds 3 and 16 were 970 and 909 units, one a mistake and one not, and no threshold splits them. The context does: round 3 was after the plant. Deaths now carry `after_plant`, and the next steps are context the labels asked for: a lurker profile (a player who's usually far from the team on T side) so lurk deaths aren't called mistakes, then coach cards in the web app scored against these labels.
+
 ## Evals
 
 "It looks right" isn't evidence, so the agent is measured on a fixed eval set: every question in `evals/cases.toml` runs against every demo (your own matches plus a public pro demo, so the numbers are reproducible).
@@ -233,6 +253,7 @@ The Falcons run is why the counting tools and the critique pass exist: on 30-rou
 | `get_round_list` | The whole match round by round: winner, first kill, plant, each team's buy, running score; halves (overtime too), rounds won per buy type, first-kill conversion |
 | `get_utility_stats` | Grenades thrown by type, side and before/after the plant, compared with teammates; flashes: enemy vs team vs self blinds (minor blinds under 1.5s separated), costly team flashes; nade damage |
 | `get_multikills` | 2k / 3k / 4k / aces per player with round numbers, victims and weapons ("when did I get the ace?") |
+| `get_death_review` | A player's deaths with walking distance to the nearest teammate, trade, opening support, blind, grenades held and swing cost; flags isolated / untraded with support / dry opening / died with utility / died blind |
 | `get_clutches` | Clutches counted the way players do (won at any odds; lost only when attempted), with saves and hopeless last-alive rounds listed apart; totals per situation and per player |
 | `get_win_probability` | One round as a win probability timeline: T's chance after every kill, plant and defuse, each event's swing, and the factors behind each estimate |
 | `get_swing_ratings` | Round swing per player (percentage points per round) next to rating, with biggest plays and costliest moments |
@@ -300,7 +321,7 @@ Your own matchmaking demos are under `.../Counter-Strike Global Offensive/game/c
 
 ## Tests
 
-`uv run pytest` runs 194 tests with no network or API key:
+`uv run pytest` runs 210 tests with no network or API key:
 
 - a hand-scripted 2v2 match that goes through the real ingest pipeline
 - mocked HTTP for the FACEIT and Leetify clients

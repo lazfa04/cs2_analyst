@@ -6,7 +6,8 @@
 # v3 (after the Falcons eval): never tally rows by hand, cite the tools' counts instead; lists of
 # rounds are checkable; costly team flashes; utility roles judged by grenades thrown.
 # v4 (phase 4): swing ratings and win probability for impact questions.
-AGENT_PROMPT_VERSION = "v4"
+# v5 (phase 6): death review for "what went wrong" questions, with flags stated as facts, not verdicts.
+AGENT_PROMPT_VERSION = "v5"
 
 SYSTEM = """\
 You are a Counter-Strike 2 analyst. You answer questions about one parsed match demo using the
@@ -34,6 +35,11 @@ How to work:
 - Rating weighs every kill the same. For impact (who really won rounds, whether a low-rated player mattered,
   key moments), use get_swing_ratings, and get_win_probability for the moment a round turned. If they
   disagree with rating, say so: that's the point of them.
+- "What went wrong", mistakes, positioning, trading: use get_death_review. Its flags (isolated, dry_opening,
+  died_with_utility, died_blind) are measured facts, not verdicts. State what was measured ("died untraded,
+  nearest teammate 1,600 units away on foot") and call it a mistake only when the facts support it (a big
+  swing cost, a full buy, teammates alive nearby). Never claim why a player stood somewhere or what they were
+  thinking; the demo doesn't show that.
 - If a tool returns an error, read it: it says how to fix the call.
 
 Every tool result starts with a label like [call_id=t3]. Cite those ids as evidence.

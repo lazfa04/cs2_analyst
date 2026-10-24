@@ -1,15 +1,11 @@
 """2D replay data: player positions per round, mapped onto the radar image.
 
-Positions aren't part of the normal ingest (they'd make every parse slower and every cache bigger
-for a feature only the web app uses). The first time a round of a demo is replayed, the original
-.dem is read once more for position snapshots 8 times a second (every 8 ticks at 64 tick), plus
-smokes and molotov fires, and cached next to the demo's other tables (~2 MB per match).
+Positions come from replay_cache (read from the .dem on first use, then cached).
 """
 
 from __future__ import annotations
 
 import functools
-import os
 from pathlib import Path
 from typing import Any
 
@@ -18,42 +14,7 @@ import polars as pl
 from ..analysis import live_rounds, weapon_label
 from ..demo_store import DemoStore
 from ..errors import AnalystError
-from ..sides import norm_side
-
-SNAPSHOT_EVERY = 8  # ticks: 8 frames a second at 64 tick
-REPLAY_FILES = ("replay_positions", "replay_smokes", "replay_fires")
-POSITION_COLS = ["tick", "steamid", "name", "side", "x", "y", "z", "yaw", "health", "active_weapon",
-                 "has_bomb", "is_defusing", "flash_duration"]
-# awpy-data release to fall back to when GitHub's "latest release" API can't be reached.
-FALLBACK_DATA_VERSION = int(os.getenv("CS2_AWPY_DATA_VERSION", "2000935"))
-
-
-def _replay_dir(store: DemoStore, demo_id: str) -> Path:
-    return store.cache_dir / demo_id
-
-
-def ensure_replay_cache(store: DemoStore, demo_id: str) -> None:
-    d = _replay_dir(store, demo_id)
-    if all((d / f"{n}.parquet").exists() for n in REPLAY_FILES):
-        return
-    source = store.source_path(demo_id)
-    if not source.is_file():
-        raise AnalystError(f"The replay needs the original demo file, which is no longer at '{source}'. "
-                           "Put it back (or ingest it again from its new location).")
-    from awpy import Demo
-
-    demo = Demo(source)
-    snaps = demo.snapshots(every=SNAPSHOT_EVERY)
-    keep = [c for c in POSITION_COLS if c in snaps.columns]
-    pos = snaps.select(keep).filter(pl.col("steamid") != 0).with_columns(
-        pl.col("side").map_elements(norm_side, return_dtype=pl.Utf8)
-    )
-    demo.load("smokes", "fires")
-    pos.write_parquet(d / "replay_positions.parquet")
-    demo.smokes.select("start_tick", "end_tick", "x", "y").write_parquet(d / "replay_smokes.parquet")
-    demo.fires.select("start_tick", "end_tick", "x", "y").write_parquet(d / "replay_fires.parquet")
-    del demo
-
+from ..replay_cache import FALLBACK_DATA_VERSION, SNAPSHOT_EVERY, ensure_replay_cache, _replay_dir  # noqa: F401
 
 @functools.cache
 def map_transform(map_name: str) -> dict[str, float]:

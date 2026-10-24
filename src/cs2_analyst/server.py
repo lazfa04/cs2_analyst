@@ -257,6 +257,47 @@ def build_server(
 
     @mcp.tool(annotations=READ_ONLY)
     @guided
+    def get_death_review(
+        demo_id: DemoId,
+        player: Player,
+        round: Annotated[int | None, Field(ge=1, description="Only this round's deaths.")] = None,
+    ) -> dict[str, Any]:
+        """A player's deaths with the context that explains them: walking distance to the nearest living
+        teammate and how many could trade, whether it was traded, opening deaths with or without a teammate's
+        flash, whether they died blind, grenades still held, and how much each death cost the round (swing).
+        Flags isolated deaths, dry opening deaths, dying with utility and dying blind. Use it for "what went
+        wrong", positioning, trading and mistakes questions. Flags are facts to weigh, not verdicts."""
+        from . import deaths, replay_cache
+
+        sid = steamid(demo_id, player)
+        meta = store.meta(demo_id)
+        try:
+            pos = replay_cache.positions(store, demo_id)
+            dist, kind = replay_cache.walking_distance(meta["map"])
+        except AnalystError:
+            pos, dist, kind = None, None, "unavailable"
+        swing = None
+        try:
+            from .winprob import swing as sw
+
+            swing = {(c["round"], c["tick"]): c["swing"] for c in sw.credits(swing_states(demo_id))
+                     if c["role"] == "death" and c["steamid"] == sid}
+        except AnalystError:
+            pass
+        out = deaths.death_review(
+            table(demo_id, "kills"), table(demo_id, "rounds"), table(demo_id, "round_players"),
+            table(demo_id, "grenade_throws"), table(demo_id, "blinds"), meta["tick_rate"],
+            positions=pos, distance=dist, distance_kind=kind, steamid=sid, round_num=round, swing=swing,
+            bomb=table(demo_id, "bomb"),
+        )
+        if pos is None:
+            out["note_positions"] = "The original .dem wasn't found, so spacing (teammate distances) is missing."
+        if swing is None:
+            out["note_swing"] = "No win probability model yet (cs2-agent model train), so swing costs are missing."
+        return out
+
+    @mcp.tool(annotations=READ_ONLY)
+    @guided
     def get_win_probability(
         demo_id: DemoId,
         round: Annotated[int, Field(ge=1, description="Round number, starting at 1.")],

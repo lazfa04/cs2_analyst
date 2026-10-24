@@ -14,7 +14,7 @@ from .conftest import DEMO_ID
 EXPECTED_TOOLS = {
     "list_demos", "ingest_demo", "get_match_overview", "get_round_summary", "get_opening_duels",
     "get_utility_stats", "get_clutches", "get_round_list", "find_kills", "get_faceit_profile",
-    "get_win_probability", "get_swing_ratings", "get_multikills",
+    "get_win_probability", "get_swing_ratings", "get_multikills", "get_death_review",
     "get_recent_faceit_matches", "get_leetify_profile",
 }
 
@@ -76,3 +76,11 @@ def test_errors_reach_the_model_with_a_recovery_hint(server, name, args, hint):
 def test_schema_validation_rejects_bad_args(server):
     res = call(server, "get_round_summary", {"demo_id": DEMO_ID, "round": 0})
     assert res.is_error
+
+
+def test_death_review_degrades_without_demo_file_or_model(server):
+    import json as _json
+
+    r = call(server, "get_death_review", {"demo_id": DEMO_ID, "player": "alpha"})
+    body = _json.loads(r.content[0].text)
+    assert body["deaths"] == 3 and "note_positions" in body and "note_swing" in body

@@ -1,0 +1,55 @@
+# Expert labels for deaths: what the death review flagged vs. what actually happened.
+# Labelled by the player himself (FACEIT level 10) from the 2D replay. This is the answer key the coach
+# is scored against: a flag can be factually right ("nearest teammate 909 units away") and still not be
+# the mistake. `mistake_by` says whose mistake it was: player, teammates, or none. `flag_was_the_issue`
+# says whether a flag pointed at what actually went wrong.
+
+[[death]]
+demo = "d2.dem"
+player = "v1zal"
+round = 3
+flag_was_the_issue = true
+flags = ["isolated"]
+mistake_by = "player"
+what = "Took a fight alone in B tunnels after the team had the site and the plant, from an untradeable position."
+lesson = "After the plant, play with the team around the bomb instead of taking isolated fights."
+
+[[death]]
+demo = "d2.dem"
+player = "v1zal"
+round = 5
+flag_was_the_issue = false
+flags = ["isolated", "died_with_utility"]
+mistake_by = "none"
+what = "Lurking in tunnels while the team took map control; got the entry kill in lower tunnels, turned to check upper and died there. Untradeable, but that's the lurk."
+lesson = "Isolation is expected for a lurker; it isn't a mistake by itself."
+
+[[death]]
+demo = "d2.dem"
+player = "v1zal"
+round = 7
+flag_was_the_issue = true
+flags = ["untraded_with_support"]
+mistake_by = "teammates"
+what = "Lined up entering B and got sprayed down; died first, so Static or Happiness should ideally have traded. Mostly a good spray by turnoforwhat."
+lesson = "The missed trade was the teammates', not the entry's."
+
+[[death]]
+demo = "d2.dem"
+player = "v1zal"
+round = 12
+flag_was_the_issue = false
+flags = ["died_with_utility"]
+mistake_by = "none"
+what = "Flanked mid-round by 1MMMM while fighting a player at short, despite checking the flank every couple of seconds. Utility unused, but it was a chaotic mid-round."
+lesson = "Unused utility in a chaotic mid-round isn't a real mistake."
+
+[[death]]
+demo = "d2.dem"
+player = "v1zal"
+round = 16
+flag_was_the_issue = false
+flags = ["isolated"]
+mistake_by = "player"
+what = "Holding the short push with Marco (ramp); took the fight and lost it. Marco was supporting and tried to trade: the position was fine, the duel was lost."
+lesson = "The mistake was losing the duel, not the spacing: 909 units with an active teammate wasn't isolated in any real sense."
