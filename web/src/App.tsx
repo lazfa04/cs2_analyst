@@ -3,11 +3,13 @@ import Home from "./Home";
 import Match from "./Match";
 import RoundView from "./RoundView";
 
-// Tiny hash router: #/  ·  #/demo/<id>  ·  #/demo/<id>/round/<n>
-function parse(hash: string): { page: "home" } | { page: "match"; id: string } | { page: "round"; id: string; n: number } {
-  const m = hash.match(/^#\/demo\/([^/]+)(?:\/round\/(\d+))?/);
+// Tiny hash router: #/  ·  #/demo/<id>  ·  #/demo/<id>/round/<n>  ·  #/demo/<id>/round/<n>/at/<tick>
+type Route = { page: "home" } | { page: "match"; id: string } | { page: "round"; id: string; n: number; at?: number };
+function parse(hash: string): Route {
+  const m = hash.match(/^#\/demo\/([^/]+)(?:\/round\/(\d+)(?:\/at\/(\d+))?)?/);
   if (!m) return { page: "home" };
-  return m[2] ? { page: "round", id: m[1], n: Number(m[2]) } : { page: "match", id: m[1] };
+  if (!m[2]) return { page: "match", id: m[1] };
+  return { page: "round", id: m[1], n: Number(m[2]), at: m[3] ? Number(m[3]) : undefined };
 }
 
 export default function App() {
@@ -26,7 +28,7 @@ export default function App() {
       <main>
         {route.page === "home" && <Home />}
         {route.page === "match" && <Match id={route.id} />}
-        {route.page === "round" && <RoundView id={route.id} n={route.n} key={`${route.id}-${route.n}`} />}
+        {route.page === "round" && <RoundView id={route.id} n={route.n} at={route.at} key={`${route.id}-${route.n}-${route.at ?? ""}`} />}
       </main>
     </div>
   );

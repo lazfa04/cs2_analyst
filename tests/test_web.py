@@ -152,3 +152,21 @@ def test_ask_without_a_key_says_so(client, monkeypatch):
     monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
     r = client.post(f"/api/demos/{DEMO_ID}/ask", json={"question": "hi"})
     assert r.status_code == 400 and "ANTHROPIC_API_KEY" in r.json()["detail"]
+
+
+def test_coach_cards_from_positions(client, store):
+    fake_replay_cache(store)
+    body = client.get(f"/api/demos/{DEMO_ID}/coach?player=alpha").json()
+    assert body["player"] == "alpha" and body["deaths"] == 3
+    # round 1: traded (bravo killed delta 2.3s later), nothing else flagged. Rounds 2 and 4: unflashed opening deaths.
+    assert [c["round"] for c in body["cards"]] == [2, 4]
+    r2 = body["cards"][0]
+    assert r2["headline"] == "dry_opening" and r2["points_at"] == "player"
+    assert r2["title"] == "Opening death without support" and r2["question"].endswith("?")
+    assert any("No win probability model" in n for n in body["notes"]), "swing missing is said, not hidden"
+    assert body["sorted_by"] == "round"
+
+
+def test_coach_cards_unknown_player(client):
+    r = client.get(f"/api/demos/{DEMO_ID}/coach?player=nobody")
+    assert r.status_code == 400

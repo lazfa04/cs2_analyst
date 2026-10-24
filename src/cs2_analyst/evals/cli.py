@@ -24,6 +24,7 @@ from .report import markdown, render, render_compare
 from .runner import RunConfig, run_eval
 
 REDTEAM = Path("evals/redteam.toml")
+DEATH_LABELS = Path("evals/death_labels.toml")
 
 CASES = Path("evals/cases.toml")
 RUNS = Path("evals/runs")
@@ -75,6 +76,9 @@ def add_parser(sub: argparse._SubParsersAction) -> None:
     rt.add_argument("--repeats", type=int, default=1,
                     help="Run the whole set N times to measure how much verdicts move between identical runs.")
     rt.add_argument("--yes", "-y", action="store_true")
+
+    dl = esub.add_parser("deaths", help="Score the death review's flags against expert death labels (free: no API calls).")
+    dl.add_argument("--file", type=Path, default=DEATH_LABELS, help="Death labels (default: evals/death_labels.toml).")
 
     lab = esub.add_parser("label", help="Label interpretations so judge agreement can be measured.")
     lab.add_argument("run", nargs="?", default="latest")
@@ -276,6 +280,68 @@ def cmd_redteam(args: argparse.Namespace, console: Console) -> None:
     console.print(f"[dim]results: {dst / 'redteam.jsonl'}[/]")
 
 
+def cmd_deaths(args: argparse.Namespace, console: Console) -> None:
+    from rich.table import Table
+
+    from .. import coach
+    from ..demo_store import DemoStore
+    from ..winprob import model as wp
+
+    try:
+        labels = coach.load_labels(args.file)
+    except (OSError, ValueError) as e:
+        sys.exit(str(e))
+    settings = get_settings()
+    store = DemoStore(settings.cache_dir)
+    try:
+        model = wp.load(settings.cache_dir / "winprob")[0]
+    except wp.ModelMissing:
+        model = None
+    with console.status("Reviewing the labelled deaths (the first time reads each .dem for positions)..."):
+        rows, profiles = coach.label_rows(store, labels, model, settings.demo_dir)
+    s = coach.score_labels(labels, rows)
+
+    t = Table(title=f"{s['found']} of {s['labels']} labelled deaths found", title_justify="left")
+    for col in ("Demo / player", "Round", "Expert: flag was the issue?", "Whose", "Flags now", "Headline",
+                "Lurking", "Any flag", "Headline only"):
+        t.add_column(col)
+    colour = {"hit": "green", "quiet": "green", "miss": "red", "false_alarm": "red"}
+    for p in s["per_death"]:
+        who = f"{p['demo']} / {p['player']}"
+        if not p["found"]:
+            t.add_row(escape(who), str(p["round"]), "yes" if p["issue"] else "no", p["mistake_by"],
+                      "[yellow]demo not found: put it in CS2_DEMO_DIR or ingest it[/]", "", "", "", "")
+            continue
+        o = p["outcomes"]
+        t.add_row(escape(who), str(p["round"]), "yes" if p["issue"] else "no", p["mistake_by"],
+                  ", ".join(p["flags_now"]) or "-", p["headline"] or "-", str(p["lurking"]),
+                  f"[{colour[o['any_flag']]}]{o['any_flag']}[/]", f"[{colour[o['headline']]}]{o['headline']}[/]")
+    console.print(t)
+
+    m = Table(title="Do the flags point at the real mistake?", title_justify="left")
+    for col in ("Reading", "Hits", "Misses", "False alarms", "Correctly quiet", "Precision", "Recall"):
+        m.add_column(col, justify="right" if col != "Reading" else "left")
+    names = {"any_flag": "Every flag is an alarm (before)", "headline": "Headline flag only, lurks cleared (now)"}
+    for mode, r in s["modes"].items():
+        pct = lambda v: "-" if v is None else f"{v:.0%}"  # noqa: E731
+        m.add_row(names[mode], str(r["hit"]), str(r["miss"]), str(r["false_alarm"]), str(r["quiet"]),
+                  pct(r["precision"]), pct(r["recall"]))
+    console.print(m)
+    if s["blame_agreement"] is not None:
+        console.print(f"Whose mistake (headline points at player/teammates/none vs the label): "
+                      f"{s['blame_agreement']:.0%} agree.")
+    for who, prof in profiles.items():
+        if "note_positions" in prof:
+            console.print(f"[yellow]{escape(who)}: {prof['note_positions']}[/]")
+        elif prof:
+            console.print(f"[dim]{escape(who)}: apart from the team before contact in {prof['rounds_apart']} of "
+                          f"{prof['rounds']} T rounds ({prof['share_apart']:.0%}), median {prof['median_units']} units"
+                          f" -> {'lurker' if prof['lurker'] else 'not a lurker'} (needs {coach.D.LURK_SHARE:.0%}+ and the "
+                          "most apart on the team)[/]")
+    console.print(f"[dim]Free: no API calls. Precision = hits / (hits + false alarms). {s['labels']} labels is a "
+                  "small sample: read it as direction, not a rate.[/]")
+
+
 def run(args: argparse.Namespace) -> None:
     console = Console()
     if args.eval_command == "run":
@@ -301,3 +367,5 @@ def run(args: argparse.Namespace) -> None:
         cmd_label(args, console)
     elif args.eval_command == "redteam":
         cmd_redteam(args, console)
+    elif args.eval_command == "deaths":
+        cmd_deaths(args, console)

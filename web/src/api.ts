@@ -138,6 +138,37 @@ export interface Answer {
   model: string;
 }
 
+export interface CoachCard {
+  round: number;
+  tick: number;
+  time_s: number | null;
+  killer: string | null;
+  weapon: string;
+  side: "T" | "CT";
+  headline: "isolated" | "untraded_with_support" | "dry_opening";
+  points_at: "player" | "teammates";
+  title: string;
+  facts: string[];
+  context: string[];
+  question: string;
+  swing_pp: number | null;
+  flags: string[];
+}
+
+export interface Coach {
+  player: string;
+  deaths: number;
+  cards: CoachCard[];
+  more_flagged: number;
+  by_whom: { player: number; teammates: number };
+  not_shown: string[];
+  lurker: boolean | null;
+  sorted_by: string;
+  notes: string[];
+  rules: string;
+  spacing_profile: Record<string, { rounds: number; rounds_apart: number; share_apart: number; median_units: number; lurker: boolean }>;
+}
+
 export interface Cs2Info {
   game_dir: string | null;
   prepared: boolean;
@@ -170,5 +201,6 @@ export const api = {
   cs2: (id: string, tick?: number) => req<Cs2Info>(`/api/demos/${id}/cs2${tick !== undefined ? `?tick=${tick}` : ""}`),
   ask: (id: string, body: { question: string; player?: string; round?: number; model: string }) =>
     req<Answer>(`/api/demos/${id}/ask`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) }),
+  coach: (id: string, player: string) => req<Coach>(`/api/demos/${id}/coach?player=${encodeURIComponent(player)}`),
   cs2Prepare: (id: string) => req<{ prepared: boolean; path: string }>(`/api/demos/${id}/cs2/prepare`, { method: "POST" }),
 };

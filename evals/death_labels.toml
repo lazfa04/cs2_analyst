@@ -13,6 +13,7 @@ flags = ["isolated"]
 mistake_by = "player"
 what = "Took a fight alone in B tunnels after the team had the site and the plant, from an untradeable position."
 lesson = "After the plant, play with the team around the bomb instead of taking isolated fights."
+demo_note = "The demo shows no plant this round: v1zal was carrying the bomb, and it dropped where he died (tick 17567). The team won by elimination. The lesson holds, more so: an isolated fight with the bomb."
 
 [[death]]
 demo = "d2.dem"

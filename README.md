@@ -153,7 +153,7 @@ Decisions:
 - **Radar images and coordinates** come from awpy's map data; world coordinates are converted to radar pixels on the server, so the frontend just draws.
 - **Same functions, no second implementation.** Every API route is a thin call into `analysis.py` or the model, like the MCP server, so the app, the agent and the evals can't disagree.
 
-### Phase 6 (started): death review
+### Phase 6: death review and coach cards
 
 The first piece of the coach: `get_death_review` gives every death the context that explains it, from the position snapshots, the grenade throws, the blinds and the swing model: **walking distance** to the nearest living teammate over the map's nav mesh (straight-line distance ignores walls, and a trade needs the on-foot distance), how many teammates could trade, whether it was traded, opening deaths with or without a teammate's flash, blind time left, grenades still held, and what the death cost the round. Flags (`isolated`, `dry_opening`, `died_with_utility`, `died_blind`) are thresholds on those facts. The agent is told to treat them as facts to weigh, never verdicts: an isolated lurk can be the plan, and a dry peek can be right on an eco.
 
@@ -171,7 +171,27 @@ A bug the tests caught on the way: snapshots are 8 ticks apart, and "the latest 
 | 12 | utility | flanked in a chaotic mid-round | no |
 | 16 | isolated (909 units) | position fine, teammate supporting; lost the duel | no |
 
-So distance alone can't separate a mistake from a plan: rounds 3 and 16 were 970 and 909 units, one a mistake and one not, and no threshold splits them. The context does: round 3 was after the plant. Deaths now carry `after_plant`, and the next steps are context the labels asked for: a lurker profile (a player who's usually far from the team on T side) so lurk deaths aren't called mistakes, then coach cards in the web app scored against these labels.
+So distance alone can't separate a mistake from a plan: rounds 3 and 16 were 970 and 909 units, one a mistake and one not, and no threshold splits them. The context does: round 3 was after the plant. Deaths now carry `after_plant`, and the labels asked for two more changes:
+
+- **Headline flags.** `isolated`, `dry_opening` (on the player) and `untraded_with_support` (on the teammates) say why a death happened. `died_with_utility` and `died_blind` say what it cost or the state the player was in, so they're listed on a card but never lead one: in the labels both utility flags were right and neither was the mistake.
+- **Lurking.** For each player on T, round by round: the median straight-line distance to the nearest living teammate from 10 seconds after freeze end until the plant. A round over 1,000 units was spent apart from the team: a lurk or a split, a choice rather than a moment. An isolated death in that round, before the plant, is counted as `isolated_while_lurking` instead of flagged; leaving the team and dying alone is still flagged. The same numbers name a habitual lurker (apart in 40%+ of T rounds, the most apart on the team): **ropz** on a public Vitality Mirage match, nobody in a FACEIT pug.
+
+**Coach cards** (match page, free, no AI call): a player's flagged deaths, costliest first by swing. Each card has the headline, the measured facts ("nearest living teammate 1,873 units away on foot, none within 800, not traded"), context (seconds into the round, after the plant, teammates alive, round won or lost), a question instead of a verdict ("the bomb was down: did this fight need taking?"), and buttons to open the 2D replay paused 3 seconds before the death or watch it in CS2. What isn't shown is counted (lurk deaths, utility-only flags, clean deaths) so nothing disappears silently.
+
+**Scoring against the labels:** `cs2-agent eval deaths` (free) re-reviews every labelled death and compares "every flag is an alarm" with "headline flag only": hits, misses, false alarms, correctly quiet, precision, recall, and whether the headline blames the same person as the label.
+
+The first run on the author's demo found nothing (a lookup bug: matching on a field the demo list doesn't have; the test had supplied it by hand). The second found three real bugs, each by looking at the demo instead of tuning a number:
+
+- **The lurk window was empty.** It ran from 10 seconds in to the round's first kill; in a pug the first kill often comes 5-9 seconds in, so 5 of 12 T rounds had no window and the rest measured a few seconds near spawn. It reported the author never apart from his team, including the round he lurked. Now it runs to the plant, and that round reads 1,509 units.
+- **awpy undercounts trades.** 1MMMM killed two players a second apart and was killed 3.7 seconds later; awpy credits one revenge kill to only the first victim, so the second death read "untraded with support". Trades now use the usual definition: the killer died to the victim's team within 5.25 seconds.
+- **The label's memory was wrong, and the demo was right.** Round 3 was labelled "after the plant"; there was no plant. The author was carrying the bomb, and it dropped where he died. Deaths now carry `carrying_bomb`, and that card asks "you had the bomb: did this fight need taking alone?"
+
+| Reading | Hits | False alarms | Correctly quiet | Precision | Whose mistake agrees |
+| --- | --- | --- | --- | --- | --- |
+| Every flag is an alarm | 2 | 3 | 0 | 40% | |
+| Headline only, lurks cleared | 2 | 1 | 2 | **67%** | 5/5 |
+
+The honest caveat: the rules were changed while looking at these five deaths, so 67% is a training score, not a test score. The rules are now frozen, and the next labels (more deaths, mostly CT side, where "isolated" is often just holding a site alone) are the test set. Round 16 is still a false alarm: 909 units with a supporting teammate, and no distance threshold separates it from round 3.
 
 ## Evals
 
@@ -321,7 +341,7 @@ Your own matchmaking demos are under `.../Counter-Strike Global Offensive/game/c
 
 ## Tests
 
-`uv run pytest` runs 210 tests with no network or API key:
+`uv run pytest` runs 226 tests with no network or API key:
 
 - a hand-scripted 2v2 match that goes through the real ingest pipeline
 - mocked HTTP for the FACEIT and Leetify clients
@@ -345,6 +365,7 @@ That demo is public in [awpy-fixtures](https://github.com/pnxenopoulos/awpy-fixt
 - [ ] Phase 3b: labelled "key mistakes" per match, to measure whether the agent finds what matters
 - [x] Phase 4: explainable round win probability model (XGBoost + logistic ensemble, TreeSHAP) and round swing rating
 - [x] Phase 5: web app with 2D replay, synced win probability, swing scoreboard and "Watch in CS2"
-- [ ] Phase 6: mistake finder (costly moments + positions: untraded spacing, dry peeks, unused utility), scored against expert labels
+- [x] Phase 6: death review (walking-distance spacing, trades, dry peeks, utility), lurker profile, coach cards, scored against expert labels
+- [ ] Phase 6b: more expert labels across demos and players; per-flag precision
 
 Built on [awpy](https://github.com/pnxenopoulos/awpy), the [MCP Python SDK](https://github.com/modelcontextprotocol/python-sdk) and the [Anthropic API](https://platform.claude.com/docs).

@@ -77,3 +77,22 @@ button.mini { padding: 1px 6px; font-size: 11px; }
 .claims .verified .ic, .claims .supported .ic { color: var(--good); } .claims .failed .ic { color: var(--bad); } .claims .unsupported .ic { color: #facc15; }
 .dropped { margin-top: 8px; font-size: 14px; }
 .answer .meta { font-size: 12px; margin-top: 8px; }
+
+.coach { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 12px 14px; margin-top: 18px; }
+.coachhead { display: flex; align-items: center; gap: 12px; } .coachhead h3 { margin: 0; flex: 1; }
+.coachhead select { background: #0d1117; color: var(--text); border: 1px solid var(--line); border-radius: 6px; padding: 5px 8px; font: inherit; }
+.coachgrid { display: grid; grid-template-columns: repeat(auto-fill, minmax(320px, 1fr)); gap: 12px; margin: 10px 0; }
+.coachcard { background: #0f1420; border: 1px solid var(--line); border-left: 4px solid var(--bad); border-radius: 8px; padding: 12px; display: flex; flex-direction: column; gap: 6px; }
+.coachcard.teammates { border-left-color: #facc15; }
+.coachcard h4 { margin: 2px 0 0; font-size: 16px; }
+.cardtop { display: flex; gap: 8px; align-items: center; font-size: 13px; } .cardtop .swing { margin-left: auto; font-variant-numeric: tabular-nums; }
+.rbadge { background: #1d2433; border-radius: 4px; padding: 1px 6px; font-weight: 700; }
+.whose { font-size: 12px; align-self: flex-start; padding: 1px 8px; border-radius: 999px; background: #3b1219; color: var(--bad); }
+.whose.teammates { background: #3a2f0b; color: #facc15; }
+.facts { margin: 4px 0; padding-left: 18px; font-size: 14px; line-height: 1.45; }
+.ctx { font-size: 12px; padding: 2px 8px; border-radius: 999px; background: #1d2433; color: var(--muted); }
+.question { font-style: italic; margin: 4px 0; }
+.cardbtns { display: flex; gap: 8px; margin-top: auto; }
+a.btn { background: #1d2433; border: 1px solid var(--line); border-radius: 6px; padding: 5px 10px; color: var(--text); }
+a.btn:hover { border-color: var(--ct); }
+.notshown { font-size: 14px; margin-top: 6px; } .notshown summary { cursor: pointer; color: var(--muted); }

@@ -140,6 +140,21 @@ def create_app(settings: Settings | None = None, store: DemoStore | None = None,
         ratings = dict(analysis.with_rating(table(demo_id, "stats")).select("steamid", "rating").iter_rows())
         return sw.swing_ratings(swing_states(demo_id), rp, labels, ratings)
 
+    @app.get("/api/demos/{demo_id}/coach")
+    def coach_cards(demo_id: str, player: str) -> dict[str, Any]:
+        """Coach cards for one player: their costliest flagged deaths with facts, context and a question."""
+        from .. import coach
+        from ..winprob import model as wp
+
+        sid = analysis.resolve_player(table(demo_id, "players"), player)["steamid"]
+        try:
+            model = winprob_model()[0]
+        except wp.ModelMissing:
+            model = None
+        review = coach.player_review(store, demo_id, sid, model=model)
+        return {"player": player, **coach.coach_cards(review), "rules": review["rules"],
+                "spacing_profile": review.get("spacing_profile", {})}
+
     @app.get("/api/demos/{demo_id}/rounds/{round_num}/winprob")
     def winprob(demo_id: str, round_num: int) -> dict[str, Any]:
         from ..winprob import swing as sw

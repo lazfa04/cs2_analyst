@@ -7,7 +7,8 @@ import WinChart from "./WinChart";
 
 const SPEEDS = [0.5, 1, 2, 4];
 
-export default function RoundView({ id, n }: { id: string; n: number }) {
+// `at`: open paused 3 seconds before this tick (coach cards link to the moment of a death).
+export default function RoundView({ id, n, at }: { id: string; n: number; at?: number }) {
   const [replay, setReplay] = useState<Replay | null>(null);
   const [wp, setWp] = useState<WinProb | null>(null);
   const [wpMsg, setWpMsg] = useState<string | null>(null);
@@ -20,9 +21,9 @@ export default function RoundView({ id, n }: { id: string; n: number }) {
   const last = useRef<number | null>(null);
 
   useEffect(() => {
-    api.replay(id, n).then((r) => { setReplay(r); setTick(r.start_tick); }).catch((e) => setError(e.message));
+    api.replay(id, n).then((r) => { setReplay(r); setTick(at ? Math.max(r.start_tick, at - 3 * r.tick_rate) : r.start_tick); }).catch((e) => setError(e.message));
     api.winprob(id, n).then(setWp).catch((e) => setWpMsg(e.message));
-  }, [id, n]);
+  }, [id, n, at]);
 
   const endTick = replay ? replay.ticks[replay.ticks.length - 1] ?? replay.end_tick : 0;
 
