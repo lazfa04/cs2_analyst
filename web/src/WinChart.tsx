@@ -11,7 +11,7 @@ interface Props {
 
 // P(T wins) over the round as a step line: the chance only changes at events.
 export default function WinChart({ steps, startTick, endTick, tickRate, currentTick, onSeek }: Props) {
-  const W = 720, H = 190, padL = 38, padR = 10, padT = 12, padB = 24;
+  const W = 720, H = 210, padL = 38, padR = 10, padT = 12, padB = 24;
   const dur = Math.max(1, (endTick - startTick) / tickRate);
   const x = (tick: number) => padL + ((tick - startTick) / tickRate / dur) * (W - padL - padR);
   const y = (p: number) => padT + (1 - p) * (H - padT - padB);
@@ -23,6 +23,8 @@ export default function WinChart({ steps, startTick, endTick, tickRate, currentT
     else d += ` L${px},${y(steps[i - 1].p_t_win)} L${px},${py}`;
   });
   if (steps.length) d += ` L${x(endTick)},${y(steps[steps.length - 1].p_t_win)}`;
+  // area between the line and 50%: tinted T above, CT below
+  const area = steps.length ? `${d} L${x(endTick)},${y(0.5)} L${x(steps[0].tick)},${y(0.5)} Z` : "";
 
   const click = (e: React.MouseEvent<SVGSVGElement>) => {
     const r = e.currentTarget.getBoundingClientRect();
@@ -32,6 +34,14 @@ export default function WinChart({ steps, startTick, endTick, tickRate, currentT
 
   return (
     <svg viewBox={`0 0 ${W} ${H}`} className="winchart" onClick={click}>
+      <defs>
+        <linearGradient id="wpfill" gradientUnits="userSpaceOnUse" x1="0" x2="0" y1={y(1)} y2={y(0)}>
+          <stop offset="0" stopColor="var(--t)" stopOpacity="0.4" />
+          <stop offset="0.5" stopColor="var(--t)" stopOpacity="0.08" />
+          <stop offset="0.5" stopColor="var(--ct)" stopOpacity="0.08" />
+          <stop offset="1" stopColor="var(--ct)" stopOpacity="0.4" />
+        </linearGradient>
+      </defs>
       {[0, 0.25, 0.5, 0.75, 1].map((p) => (
         <g key={p}>
           <line x1={padL} x2={W - padR} y1={y(p)} y2={y(p)} className={p === 0.5 ? "mid" : "grid"} />
@@ -40,6 +50,7 @@ export default function WinChart({ steps, startTick, endTick, tickRate, currentT
       ))}
       <text x={padL + 4} y={padT + 10} className="axis tlabel">T wins</text>
       <text x={padL + 4} y={H - padB - 4} className="axis ctlabel">CT wins</text>
+      <path d={area} fill="url(#wpfill)" />
       <path d={d} className="pline" />
       {steps.slice(1).map((s) => (
         <circle key={s.step} cx={x(s.tick)} cy={y(s.p_t_win)} r={Math.min(9, 3 + Math.abs(s.swing_t_pp) / 6)}

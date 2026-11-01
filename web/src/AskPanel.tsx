@@ -81,8 +81,11 @@ export default function AskPanel({ id, round, players, player: chosen }: { id: s
   const shownHistory = round === undefined ? history : history.filter((h) => h.round === round);
 
   return (
-    <div className="ask">
-      <h3>Ask the analyst{round !== undefined && <span className="muted"> · about round {round}</span>}</h3>
+    <div className="ask panel">
+      <div className="sechead">
+        <h3>Ask the analyst</h3>
+        <span className="aside cost">{round !== undefined ? `About round ${round} · ` : ""}Uses API credit</span>
+      </div>
       <div className="askrow">
         <select value={player} onChange={(e) => setPlayer(e.target.value)} title="Who 'I' and 'my' refer to">
           <option value="">I am… (optional)</option>
@@ -96,14 +99,14 @@ export default function AskPanel({ id, round, players, player: chosen }: { id: s
         <input value={question} onChange={(e) => setQuestion(e.target.value)} disabled={busy}
                onKeyDown={(e) => { if (e.key === "Enter") ask(question); e.stopPropagation(); }}
                placeholder={round !== undefined ? "e.g. why did we lose this round?" : "e.g. how did I play?"} />
-        <button onClick={() => ask(question)} disabled={busy || !question.trim()}>{busy ? "Thinking…" : "Ask"}</button>
+        <button className="primary" onClick={() => ask(question)} disabled={busy || !question.trim()}>{busy ? "Thinking…" : "Ask"}</button>
       </div>
       <div className="chips">
         {(round !== undefined ? ROUND_SUGGESTIONS : MATCH_SUGGESTIONS).map((s) => (
           <button key={s} className="chip" disabled={busy} onClick={() => ask(s)}>{s}</button>
         ))}
       </div>
-      {busy && <div className="notice">The agent is pulling stats with its tools, then every fact it states gets checked against them and a reviewer reads the conclusions. Usually 15–30 seconds.</div>}
+      {busy && <div className="notice loading">The agent is pulling stats with its tools, then every fact it states gets checked against them and a reviewer reads the conclusions. Usually 15–30 seconds.</div>}
       {error && <div className="error">{error}</div>}
 
       {shownHistory.map((a, i) => {

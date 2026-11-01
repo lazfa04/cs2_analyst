@@ -9,6 +9,11 @@ export default function Cs2Modal({ id, tick, label, onClose }: { id: string; tic
 
   const load = () => api.cs2(id, tick).then(setInfo).catch((e) => setError(e.message));
   useEffect(() => { load(); }, [id, tick]);
+  useEffect(() => {
+    const key = (e: KeyboardEvent) => { if (e.key === "Escape") onClose(); };
+    addEventListener("keydown", key);
+    return () => removeEventListener("keydown", key);
+  }, [onClose]);
 
   const prepare = async () => {
     setBusy(true); setError(null);
@@ -20,14 +25,14 @@ export default function Cs2Modal({ id, tick, label, onClose }: { id: string; tic
     <div className="modal-bg" onClick={onClose}>
       <div className="modal" onClick={(e) => e.stopPropagation()}>
         <h3>Watch in CS2</h3>
-        <p className="muted">{label}</p>
+        <p className="muted" style={{ marginTop: 0 }}>{label}</p>
         {error && <div className="error">{error}</div>}
         {info && !info.game_dir && (
           <p>CS2's folder wasn't found. Add <code>CS2_GAME_DIR=...\Counter-Strike Global Offensive\game\csgo</code> to your .env and restart the app.</p>
         )}
         {info?.game_dir && !info.prepared && (
           <p>Step 0: CS2 can only play demos inside its own folder.{" "}
-            <button onClick={prepare} disabled={busy}>{busy ? "Copying…" : "Copy this demo to CS2"}</button>
+            <button className="primary" onClick={prepare} disabled={busy}>{busy ? "Copying…" : "Copy this demo to CS2"}</button>
           </p>
         )}
         {info?.game_dir && info.prepared && <p className="good">✓ The demo is in CS2's folder.</p>}
@@ -42,7 +47,7 @@ export default function Cs2Modal({ id, tick, label, onClose }: { id: string; tic
             ))}
           </ol>
         )}
-        <button className="close" onClick={onClose}>Close</button>
+        <div className="modalfoot"><button onClick={onClose}>Close</button></div>
       </div>
     </div>
   );

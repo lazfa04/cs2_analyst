@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { Frame, Replay } from "./api";
 
-const COLORS = { CT: "#5aa9ff", T: "#f2a33a" } as const;
+const COLORS = { CT: "#4fa3ff", T: "#f0a43a" } as const;   // keep in sync with --ct / --t in styles.css
 const SMOKE_RADIUS = 144;   // world units
 const FIRE_RADIUS = 110;
 
@@ -47,7 +47,7 @@ export default function ReplayCanvas({ replay, tick, showNames }: Props) {
     const ctx = c.getContext("2d")!;
     ctx.setTransform(dpr * size / 1024, 0, 0, dpr * size / 1024, 0, 0);
     ctx.clearRect(0, 0, 1024, 1024);
-    ctx.fillStyle = "#0d1117";
+    ctx.fillStyle = "#0a0d12";
     ctx.fillRect(0, 0, 1024, 1024);
     if (img) { ctx.globalAlpha = 0.85; ctx.drawImage(img, 0, 0, 1024, 1024); ctx.globalAlpha = 1; }
     const k = 1 / replay.units_per_px;

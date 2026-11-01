@@ -39,8 +39,9 @@ export default function PlayerPanel({ id, player }: { id: string; player: string
   const rec = f?.recent;
 
   return (
-    <section className="profile">
-      {busy && <p className="muted">Loading FACEIT and Leetify…</p>}
+    <section className="profile panel">
+      <div className="sechead"><h3>{player}</h3><span className="aside muted small">FACEIT · Leetify · this match vs usual</span></div>
+      {busy && <p className="loading">Loading FACEIT and Leetify…</p>}
       {error && <div className="error">{error}</div>}
       {ctx && (
         <>
@@ -51,7 +52,7 @@ export default function PlayerPanel({ id, player }: { id: string; player: string
                 <div className="faceit">
                   <span className={`level ${levelClass(f?.level)}`}>{f?.level ?? "?"}</span>
                   <div>
-                    <a href={`https://www.faceit.com/en/players/${f?.nickname}`} target="_blank" rel="noreferrer"><b>{f?.nickname}</b></a>
+                    <a href={`https://www.faceit.com/en/players/${f?.nickname}`} target="_blank" rel="noreferrer" className="who">{f?.nickname}</a>
                     <div className="muted small">{f?.elo} Elo · {fmt(f?.lifetime?.matches, 0)} matches · {fmt(f?.lifetime?.win_rate_pct, 0)}% won</div>
                   </div>
                 </div>
@@ -72,7 +73,7 @@ export default function PlayerPanel({ id, player }: { id: string; player: string
               <div className="svcname">Leetify</div>
               {l?.error ? <p className="muted small">{l.error}</p> : (
                 <>
-                  <a href={`https://leetify.com/app/profile/${ctx.steam64}`} target="_blank" rel="noreferrer"><b>{l?.name}</b></a>
+                  <a href={`https://leetify.com/app/profile/${ctx.steam64}`} target="_blank" rel="noreferrer" className="who">{l?.name}</a>
                   <div className="muted small">{l?.total_matches} matches tracked{typeof l?.winrate === "number" ? ` · ${fmt(l.winrate <= 1 ? l.winrate * 100 : l.winrate, 0)}% won` : ""}</div>
                   <div className="chips">
                     {Object.entries(l?.rating ?? {}).filter(([, v]) => typeof v === "number").map(([k, v]) => (
@@ -86,9 +87,9 @@ export default function PlayerPanel({ id, player }: { id: string; player: string
             </div>
           </div>
 
-          <table className="board compare">
+          <div className="tablewrap"><table className="board compare">
             <thead>
-              <tr><th className="left">{ctx.player}: this match vs usual</th><th>This match</th>
+              <tr><th className="left">Stat</th><th>This match</th>
                 <th>Last {ctx.recent_count ?? 20} (FACEIT)</th><th>Usual</th><th className="left">Usual from</th></tr>
             </thead>
             <tbody>
@@ -108,8 +109,8 @@ export default function PlayerPanel({ id, player }: { id: string; player: string
                 );
               })}
             </tbody>
-          </table>
-          <p className="muted small">Green/red: this match against the last {ctx.recent_count ?? 20} FACEIT matches where there are any, else the usual number. Leetify measures trading and utility its own way, so those rows are roughly comparable, not identical.</p>
+          </table></div>
+          <p className="note">Green/red: this match against the last {ctx.recent_count ?? 20} FACEIT matches where there are any, else the usual number. Leetify measures trading and utility its own way, so those rows are roughly comparable, not identical.</p>
         </>
       )}
     </section>

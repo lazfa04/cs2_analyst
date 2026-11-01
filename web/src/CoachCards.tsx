@@ -18,28 +18,29 @@ export default function CoachCards({ id, player }: { id: string; player: string 
   const profile = coach ? Object.values(coach.spacing_profile)[0] : undefined;
 
   return (
-    <section className="coach">
-      <div className="coachhead">
+    <section className="coach panel">
+      <div className="sechead">
         <h3>Coach: deaths worth a second look</h3>
+        <span className="aside muted small">Measured facts, no AI call</span>
       </div>
-      {!player && <p className="muted">Pick a player above to see their costliest deaths, with what the demo measured and a question to ask yourself. Free, no AI call.</p>}
-      {busy && <p className="muted">Reviewing deaths… (the first time reads the demo for positions, ~5 seconds)</p>}
+      {!player && <p className="empty">Pick a player above to see their costliest deaths, with what the demo measured and a question to ask yourself. Free, no AI call.</p>}
+      {busy && <p className="loading">Reviewing deaths… (the first time reads the demo for positions, ~5 seconds)</p>}
       {error && <div className="error">{error}</div>}
       {coach && (
         <>
-          <p className="muted">
+          <p className="coachsum">
             {coach.deaths} deaths reviewed · {coach.cards.length + coach.more_flagged} worth a look
             ({coach.by_whom.player} point at {player}, {coach.by_whom.teammates} at teammates) · sorted by {coach.sorted_by}
             {profile && ` · on T, a round spent apart from the team (before the plant) in ${profile.rounds_apart}/${profile.rounds} rounds${profile.lurker ? " (lurker)" : ""}`}
           </p>
           <div className="coachgrid">
             {coach.cards.map((c) => (
-              <article key={c.tick} className={`coachcard ${c.points_at}`}>
+              <article key={c.tick} className={`coachcard cut ${c.points_at}`}>
                 <div className="cardtop">
                   <a className="rbadge" href={`#/demo/${id}/round/${c.round}`}>R{c.round}</a>
-                  <span className={c.side === "CT" ? "ctc" : "tc"}>{c.side}</span>
+                  <span className={`side-tag ${c.side.toLowerCase()}`}>{c.side}</span>
                   <span className="muted">{c.time_s !== null ? `${c.time_s}s` : ""} · {c.killer ?? "world"} ({c.weapon})</span>
-                  {c.swing_pp !== null && <span className="swing bad">{c.swing_pp.toFixed(1)} pp</span>}
+                  {c.swing_pp !== null && <span className="swing bad" title="Change in the team's chance to win the round">{c.swing_pp.toFixed(1)}<small>pp</small></span>}
                 </div>
                 <h4>{c.title}</h4>
                 <span className={`whose ${c.points_at}`}>{c.points_at === "player" ? `on ${player}` : "on teammates"}</span>
@@ -47,7 +48,7 @@ export default function CoachCards({ id, player }: { id: string; player: string 
                 <div className="chips">{c.context.map((x) => <span key={x} className="ctx">{x}</span>)}</div>
                 <p className="question">{c.question}</p>
                 <div className="cardbtns">
-                  <a className="btn" href={`#/demo/${id}/round/${c.round}/at/${c.tick}`}>▶ Replay the moment</a>
+                  <a className="btn primary" href={`#/demo/${id}/round/${c.round}/at/${c.tick}`}>▶ Replay the moment</a>
                   <button onClick={() => setCs2({ tick: c.tick, label: `Round ${c.round}: ${c.killer} kills ${player}` })}>Watch in CS2</button>
                 </div>
               </article>
